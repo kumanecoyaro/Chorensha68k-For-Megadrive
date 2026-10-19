@@ -19,6 +19,14 @@
     .include "spr_def.inc"
     .set    MAX_CALLS, 255
     .set    MAX_HW, 64
+    .set    PLAYER_LO, 0xABD                | player.ref, player2.ref
+    .set    PLAYER_HI, 0xAD5
+    .set    EFFECT_LO, 0x0B5                | expl2 .. debris2
+    .set    EFFECT_HI, 0xAA8
+    .set    EFFECT_PR, 0x31                 | effects: below the enemies ($34)
+    .set    FX_MAX, 20                      | at most this many effect sprites
+    .set    DEBRIS_LO, 0x0B4                | debris.sp
+    .set    DEBRIS_HI, 0x104
 
     .text
     .globl  h_xsp_set, h_xsp_set_obj, h_xobj_set, xsp_call, xsp_build
@@ -39,8 +47,7 @@ record:
     move.w  %d2, (%a0)+
     move.w  %d3, (%a0)
     move.w  %a1, %d4                    | call index
-    move.w  %d3, %d1
-    and.w   #63, %d1                    | priority
+    move.w  rec_pr, %d1                 | priority (set by the caller)
     lea     bhead, %a1
     lea     call_next, %a0
     move.b  0(%a1,%d1.w), 0(%a0,%d4.w)
@@ -71,18 +78,56 @@ h_xsp_set:
     cmp.w   #NPCG, %d2
     bcc.s   8f
     movem.l %d1-%d2/%a1, -(%sp)
+    move.w  %d3, %d1
+    and.w   #63, %d1
+    cmp.w   #DEBRIS_LO, %d2             | debris.sp PCGs: every other one, behind
+    bcs.s   1f
+    cmp.w   #DEBRIS_HI, %d2
+    bcc.s   1f
+    eori.w  #1, fx_toggle
+    beq.s   7f
+    cmp.w   #EFFECT_PR, %d1
+    bls.s   1f
+    moveq   #EFFECT_PR, %d1
+1:  move.w  %d1, rec_pr
+    move.l  (%sp), %d1
     or.w    #0x8000, %d2
     bsr     record
-    movem.l (%sp)+, %d1-%d2/%a1
+7:  movem.l (%sp)+, %d1-%d2/%a1
 8:  moveq   #1, %d0
     rts
 9:  moveq   #0, %d0
     rts
 
 | xobj_set (the original clobbers d0-d4/a0-a2)
+| Sprite budget (64 per frame): the player ship is drawn before everything
+| but the text and the bomb ($3F; the priorities in use stay within $31-$3F
+| so the list scan in xsp_build stays short);
+| explosions / debris / sparks (refs EFFECT_LO..EFFECT_HI, debris.sp PCGs)
+| only every other call, behind everything else and FX_MAX sprites at most,
+| so they no longer push the player, enemies and bullets out of the sprite
+| table (or eat the frame time).
 h_xobj_set:
     cmp.w   #NREF, %d2
     bcc.s   9f
+    move.w  %d3, %d4                    | (the original clobbers d0-d4)
+    and.w   #63, %d4
+    cmp.w   #PLAYER_LO, %d2
+    bcs.s   2f
+    cmp.w   #PLAYER_HI, %d2
+    bcc.s   2f
+    moveq   #0x3E, %d4                  | player: in front of enemies, bullets ($3C)
+    bra.s   8f
+2:  cmp.w   #EFFECT_LO, %d2
+    bcs.s   8f
+    cmp.w   #EFFECT_HI, %d2
+    bcc.s   8f
+    eori.w  #1, fx_toggle
+    beq.s   9f                          | every other effect is not drawn
+    cmp.w   #EFFECT_PR, %d4
+    bls.s   8f
+    moveq   #EFFECT_PR, %d4
+8:  move.w  %d4, rec_pr
     bra     record
 9:  rts
 
@@ -93,6 +138,7 @@ xsp_call:
     move.l  16(%sp), %d1
     move.l  20(%sp), %d2
     move.l  24(%sp), %d3
+    move.w  #0x3F, rec_pr               | text: the very front (recorded last)
     bsr     record
     movem.l (%sp)+, %d2-%d3
     rts
@@ -112,13 +158,21 @@ xsp_build:
 1:  move.w  (%sp), %d0
     cmp.w   pr_lo, %d0
     blt     90f
-    lea     bhead, %a1
+    move.w  #MAX_HW, hw_limit
+    cmp.w   #EFFECT_PR, %d0
+    bne.s   3f
+    move.w  %d7, %d1                    | effects: FX_MAX more at most
+    add.w   #FX_MAX, %d1
+    cmp.w   #MAX_HW, %d1
+    bcc.s   3f
+    move.w  %d1, hw_limit
+3:  lea     bhead, %a1
     moveq   #0, %d6
     move.b  0(%a1,%d0.w), %d6
     st      0(%a1,%d0.w)
 2:  cmp.b   #0xFF, %d6
     beq     80f
-    cmp.w   #MAX_HW, %d7
+    cmp.w   hw_limit, %d7
     bcc     80f
     move.w  %d6, -(%sp)                 | keep the call index
     lsl.w   #3, %d6
@@ -291,7 +345,7 @@ xsp_build:
     move.w  %d4, (%a0)+
     add.w   #128, %d0
     move.w  %d0, (%a0)+
-    cmp.w   #MAX_HW, %d7
+    cmp.w   hw_limit, %d7
     bcc.s   67f
 68: subq.w  #1, (%sp)
     bpl     31b
@@ -341,7 +395,10 @@ lookup_slow:
     .section .note.GNU-stack,"",%progbits
 
     .bss
-    .globl  stat_pieces, stat_calls, stat_out, stat_rec
+    .globl  stat_pieces, stat_calls, stat_out, stat_rec, fx_toggle
+rec_pr:      .word 0
+hw_limit:    .word 0
+fx_toggle:   .word 0
     .balign 2
 stat_pieces: .long 0
 stat_calls:  .long 0

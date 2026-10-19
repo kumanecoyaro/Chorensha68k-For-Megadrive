@@ -32,8 +32,8 @@ static u8 req_no;
 static u16 play_pr, play_frames;
 
 #define QMAX 1536
-static u8 queue[QMAX];          /* pending 3-byte writes: part offset, reg, value */
-static u16 qlen;
+u8 queue[QMAX];                 /* pending 3-byte writes: part offset, reg, value */
+u16 qlen;
 u16 ym_shadow[2][256];         /* last value written, $100 = unknown */
 static u8 dac_on;
 static u8 music_pan6 = 0xC0;   /* FM6 pan wanted by the music ($B6, shared with the DAC) */
@@ -58,7 +58,7 @@ u8 ym_log[6000 * 4];
 
 /* move queued writes into the Z80 ring; returns the number of bytes moved
  * (bus must not be held by the caller) */
-static u16 ym_flush(void)
+u16 ym_flush(void)
 {
     u16 i, n;
     u8 rd, room;

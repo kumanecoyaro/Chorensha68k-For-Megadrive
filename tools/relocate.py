@@ -78,6 +78,7 @@ HOOKS = [
     (0x39dda, 'x_nop', 'c'),
     # palettes (graphic / sprite palette registers)
     (0x05224, 'x_pal_upload', 'c'),
+    (0x0479a, 'x_nop', 'c'),            # palette fade into the graphic palette buffer (not shown yet)
     (0x05a3a, 'x_pal_anim', 'c'),
     (0x051b8, 'x_pal_load', 'c'),
     # BG: file loading and graphic-VRAM chip drawing
@@ -103,6 +104,17 @@ HOOKS = [
     (0x39750, 'x_nop', 'c'),
 ]
 
+# Effect objects (explosions, debris, sparks, the stage 1 opening debris
+# field): their init functions get every other object allocation refused
+# (`jsr fn_040b6` -> `jsr h_alloc_fx`), halving the number of effect
+# objects - their logic and their sprites.
+FX_INITS = [
+    0x0ec0e, 0x0ece0, 0x0edb2, 0x0ee82,         # classes $81-$84: opening debris
+    0x0ffd0, 0x100b2, 0x10154, 0x101f8,         # $101 $102 $103 $105 explosions
+    0x102a6,                                    # $10e
+    0x10a1a, 0x10b7c,                           # $122 spark, $124 debris
+]
+
 # immediate patches: (address, old bytes hex, new bytes hex, comment)
 def patches():
     n = POOL_OBJS
@@ -111,6 +123,9 @@ def patches():
         (0x04082, '017f', f'{n:04x}', 'free object count (move.w #$17f)'),
         # only stage 1 is converted so far: after the stage 1 clear (state $210)
         # play stage 1 again instead of moving on (addq.w #1,B_4a0ee -> nop)
+        # player Y limit: the X68000 screen is 256 lines, the Mega Drive shows 224
+        (0x0604a, '3f00', '3700', 'player y limit (cmp.w #$3f00,d1)'),
+        (0x06052, '3f00', '3700', 'player y limit (move.w #$3f00,B_4cca0)'),
         (0x0701c, '5279', '4e714e714e71', 'stage 1 repeats (addq.w #1,abs.l: operand already relocated)'),
     ]
 
@@ -182,7 +197,7 @@ def main(xpath, lst, xspdir, out):
         img[addr:addr + len(nb)] = nb
 
     # ---- hooks
-    names = []
+    names = ['h_alloc_fx']
     hs = sorted(h[0] for h in HOOKS)
     for a, b in zip(hs, hs[1:]):
         assert b - a >= 6, f'hook patches overlap at ${a:x} / ${b:x}'
@@ -192,6 +207,16 @@ def main(xpath, lst, xspdir, out):
             names.append(sym)
         i = names.index(sym)
         struct.pack_into('>HI', img, addr, 0x4EF9, HOOK_BASE + 6 * i)
+
+    # effect allocations: retarget the first jsr fn_040b6 of each init function
+    ai = HOOK_BASE + 6 * names.index('h_alloc_fx')
+    for f in FX_INITS:
+        for a in range(f, f + 0x40, 2):
+            if img[a:a + 2] == b'\x4e\xb9' and struct.unpack_from('>I', img, a + 2)[0] == ORIG_ROM + 0x40b6:
+                struct.pack_into('>I', img, a + 2, ai)
+                break
+        else:
+            raise SystemExit(f'no jsr fn_040b6 in ${f:x}')
 
     # ---- RAM initial image (data vars / routines copied to RAM)
     rimg = bytearray(ram_size)

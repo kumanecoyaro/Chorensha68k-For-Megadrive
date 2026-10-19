@@ -43,6 +43,8 @@ def main():
     brk = {}
     prof = collections.Counter() if '--profile' in sys.argv else None
     fl = []
+    chipcount = collections.Counter()
+    pcghist = collections.Counter() if '--calls' in sys.argv else None
     padv = int(sys.argv[sys.argv.index('--pad') + 1], 16) if '--pad' in sys.argv else 0
     for i, a in enumerate(sys.argv):
         if a == '--break':
@@ -75,6 +77,7 @@ def main():
         span = (sym[a], sym[b])
     vint = struct.unpack('>I', data[0x78:0x7C])[0]
     rte_addr = data.index(b'\x4e\x73', vint)     # rte of _vint
+    wait_lo = sym['x_bg_chip']; wait_hi = wait_lo + 0x80
     vs_addr = sym['x_vsync']; vs_lo = vs_addr; vs_hi = sym.get('x_xsp_out', vs_addr + 0x40)
     counters = [sym['vblank_count'], sym['ORIG_VBLCNT']] if 'ORIG_VBLCNT' in sym else [sym['vblank_count']]
     state = {'n': 0, 'vbl': 0}
@@ -87,6 +90,16 @@ def main():
         last.append(addr)
         if prof is not None:
             prof[addr] += 1
+        if '--t056' in sys.argv and addr in (0x156da, 0x1576c, 0x15862, 0x15644):   # TRACE056
+            gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
+            if 281 <= gf <= 283 and state.get('t5', 0) < 60:
+                state['t5'] = state.get('t5', 0) + 1
+                print('t056', name(addr), 'gf', gf, 'd3', uc.reg_read(UC_M68K_REG_D3), 'd5', uc.reg_read(UC_M68K_REG_D5),
+                      'd6', hex(uc.reg_read(UC_M68K_REG_D6)), 'sp', hex(uc.reg_read(UC_M68K_REG_A7)))
+        if addr == sym.get('h_xsp_set') and pcghist is not None:
+            pcghist[uc.reg_read(UC_M68K_REG_D2) >> 4 & 0xFFF] += 1
+        if addr == sym.get('h_xobj_set') and pcghist is not None:
+            pcghist['ref%03x' % (uc.reg_read(UC_M68K_REG_D2) >> 6 & 0xFFF)] += 1
         if span:
             if addr == span[0]:
                 state['span0'] = state['n']
@@ -99,8 +112,18 @@ def main():
                     state['spanhist'] = state['sh']
                 if 3500 < ln < 5000:
                     state['spanmid'] = state['sh']
+                state.setdefault('spanall', collections.Counter()).update(state['sh'])
             elif 'span0' in state:
                 state['sh'][name(addr).split('+')[0]] += 1
+        if addr == sym.get('x_bg_chip'):
+            gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
+            chipcount[gf // 50] += 1
+            if chipcount[gf // 50] in (100, 101, 102, 2000, 2001):
+                sp = uc.reg_read(UC_M68K_REG_A7)
+                ret, a1, a2, a3, a4, a5 = struct.unpack('>IIIIII', uc.mem_read(sp, 24))
+                print('chip gf', gf, 'ret', name(ret), 'chip', hex(a2), 'layer', a3, 'x', a4, 'y', a5,
+                      'B_90462', hex(struct.unpack('>H', uc.mem_read(0xFF749A + 0x90462 - 0x90252, 2))[0]),
+                      'stack', uc.mem_read(sp, 40).hex())
         if addr == vs_addr:
             gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
             fl.append((gf, state['n'] - state.get('vs', 0) - state.get('wait', 0))); state['vs'] = state['n']; state['wait'] = 0
@@ -114,27 +137,22 @@ def main():
             print(f'break {name(addr)}: d0-d3/a0-a3', ' '.join(f'{r:08x}' for r in regs),
                   'stack', uc.mem_read(sp, 32).hex())
         state['n'] += 1
-        if addr == rte_addr:               # rte of the VBlank handler (done by hand)
-            sp = uc.reg_read(UC_M68K_REG_A7)
-            sr, pc = struct.unpack('>HI', uc.mem_read(sp, 6))
-            uc.reg_write(UC_M68K_REG_A7, sp + 6)
-            uc.reg_write(UC_M68K_REG_SR, sr)
-            uc.reg_write(UC_M68K_REG_PC, pc)
-            state['in_int'] = False
+        # control transfers done by hand: stop here (before this instruction
+        # runs) and let the outer loop change PC and restart
+        if addr == rte_addr:               # rte of the VBlank handler
+            state['jump'] = ('rte', addr)
+            uc.emu_stop()
             return
         if state['n'] % period == 0:
             state['pend'] = True
-        if state.get('pend') and not state.get('in_int'):
+        # (unicorn evaluates the condition codes lazily, so SR read here can be
+        # stale: interrupts are only taken where the program waits for them)
+        if state.get('pend') and not state.get('in_int') and (vs_lo <= addr < vs_hi or wait_lo <= addr < wait_hi):
             sr = uc.reg_read(UC_M68K_REG_SR)
             if (sr >> 8) & 7 < 6:          # take the level-6 interrupt
                 state['pend'] = False
-                state['in_int'] = True
-                sp = uc.reg_read(UC_M68K_REG_A7) - 6
-                uc.mem_write(sp, struct.pack('>HI', sr, addr))
-                uc.reg_write(UC_M68K_REG_A7, sp)
-                uc.reg_write(UC_M68K_REG_SR, (sr & 0xF8FF) | 0x2600)
-                uc.reg_write(UC_M68K_REG_PC, vint)
-                state['vbl'] += 1
+                state['jump'] = ('int', addr)
+                uc.emu_stop()
                 return
         if addr in exc_addrs:
             report(f'exception handler {exc_addrs[addr]} reached')
@@ -180,11 +198,49 @@ def main():
     uc.hook_add(UC_HOOK_MEM_READ, rd, begin=0xA00000, end=0xC0FFFF)
     uc.mem_write(0xA10003, b'\x7f')
     uc.hook_add(UC_HOOK_MEM_UNMAPPED, bad)
+    if '--watch' in sys.argv:
+        wa = int(sys.argv[sys.argv.index('--watch') + 1], 16)
+        def watch(uc, access, addr, size, value, ud):
+            pc = uc.reg_read(UC_M68K_REG_PC)
+            gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
+            if state.get('wn', 0) < 30:
+                state['wn'] = state.get('wn', 0) + 1
+                print(f'watch write {addr:#x} = {value:#x} size {size} pc {name(pc)} gf {gf} last', [name(a) for a in list(last)[-6:]])
+        uc.hook_add(UC_HOOK_MEM_WRITE, watch, begin=wa, end=wa + 1)
     sp, pc = struct.unpack('>II', data[:8])
     uc.reg_write(UC_M68K_REG_A7, sp)
     uc.reg_write(UC_M68K_REG_SR, 0x2700)
     try:
-        uc.emu_start(pc, 0x7FFFFFFF, count=maxi)
+        while state['n'] < maxi:
+            state.pop('jump', None)
+            uc.emu_start(pc, 0x7FFFFFFF, count=maxi - state['n'])
+            j = state.get('jump')
+            if not j:
+                break
+            kind, at = j
+            real = uc.reg_read(UC_M68K_REG_PC)
+            if state.get('dbg', 0) < 6:
+                state['dbg'] = state.get('dbg', 0) + 1
+                print('jump', kind, 'hooked', name(at), 'pc after stop', name(real))
+            at = real
+            if kind == 'rte' and at != rte_addr:
+                pc = at
+                continue
+            if kind == 'rte':
+                sp = uc.reg_read(UC_M68K_REG_A7)
+                sr, pc = struct.unpack('>HI', uc.mem_read(sp, 6))
+                uc.reg_write(UC_M68K_REG_A7, sp + 6)
+                uc.reg_write(UC_M68K_REG_SR, sr)
+                state['in_int'] = False
+            else:
+                sr = uc.reg_read(UC_M68K_REG_SR)
+                sp = uc.reg_read(UC_M68K_REG_A7) - 6
+                uc.mem_write(sp, struct.pack('>HI', sr, at))
+                uc.reg_write(UC_M68K_REG_A7, sp)
+                uc.reg_write(UC_M68K_REG_SR, (sr & 0xF8FF) | 0x2600)
+                pc = vint
+                state['in_int'] = True
+                state['vbl'] += 1
     except UcError as e:
         report(f'UcError {e} pc={uc.reg_read(UC_M68K_REG_PC):#x}')
     if prof is not None:
@@ -209,9 +265,14 @@ def main():
     for v in ('stat_rec', 'stat_calls', 'stat_pieces', 'stat_out'):
         if v in sym:
             print(v, struct.unpack('>I', uc.mem_read(sym[v], 4))[0])
+    if chipcount:
+        print('BG chips per 50 game frames:', sorted(chipcount.items())[:40])
+    if pcghist:
+        print('calls (pcg>>4 / ref>>6):', pcghist.most_common(15))
     if spans:
         spans.sort()
         print('biggest span:', state['spanhist'].most_common(12))
+        print('all spans:', state['spanall'].most_common(12))
         if 'spanmid' in state:
             print('a 3500-5000 span:', state['spanmid'].most_common(12))
         print('span calls', len(spans), 'median', spans[len(spans) // 2], 'p90', spans[len(spans) * 9 // 10],

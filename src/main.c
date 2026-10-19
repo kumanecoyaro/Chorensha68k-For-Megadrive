@@ -6,6 +6,7 @@
 
 long ocall(void *fn, long a1, long a2, long a3, long a4);
 long x_bg_load(void);
+long x_text_clear(void);
 void bg_chips(void);
 
 u16 frame_count;
@@ -103,6 +104,7 @@ int main(void)
     OW(0x4a0e6) = 0x10;
     OW(0x4a0e8) = 0x30;
     for (;;) {
+        x_text_clear();                     /* (the title screen would have cleared "GAME OVER") */
         OW(0x4a0f0) = OW(0x4a0f8);
         OW(0x4a0ee) = 1;                    /* stage 1 */
         OW(0x4a0f2) = OW(0x4a10a);

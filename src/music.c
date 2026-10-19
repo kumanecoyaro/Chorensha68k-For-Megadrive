@@ -94,14 +94,33 @@ static const u8 ch_part[6] = { 0, 0, 0, 1, 1, 1 };
 static const u8 ch_off[6] = { 0, 1, 2, 0, 1, 2 };
 
 extern u16 ym_shadow[2][256];
-void ym_put(u8 part, u8 reg, u8 val);
+extern u8 queue[];
+extern u16 qlen;
+u16 ym_flush(void);
+
+/* sound.c's ym_put, inlined (the queue is drained by the VBlank's sound_update) */
+static inline void ym_put(u8 part, u8 reg, u8 val)
+{
+    u8 *q;
+    while (qlen + 3 > 1536)
+        ym_flush();
+    q = &queue[qlen];
+    q[0] = part << 1;
+    q[1] = reg;
+    q[2] = val;
+    qlen += 3;
+}
 
 /* ym_write() with the redundant-write check inlined (most calls end there) */
 static inline void fm_reg(u8 c, u8 reg, u8 val)
 {
     u8 p = ch_part[c], r = reg + ch_off[c];
-    if ((reg & 0xF0) == 0xA0 || (p && r == 0xB6)) {
-        ym_write(p, r, val);            /* frequency pairs / FM6 pan (DAC) */
+    if ((reg & 0xF0) == 0xA0) {
+        ym_put(p, r, val);              /* frequency pairs: always written */
+        return;
+    }
+    if (p && r == 0xB6) {
+        ym_write(p, r, val);            /* FM6 pan (shared with the DAC) */
         return;
     }
     if (ym_shadow[p][r] == val)
@@ -195,12 +214,12 @@ static const u8 div3[36] = {
 
 static void set_pitch(MCh *c)
 {
-    s32 p = (s32)(c->note + 15) * 64 + c->detune + shr8(&c->pacc);
+    s16 p = (s16)((c->note + 15) << 6) + c->detune + (s16)shr8(&c->pacc);
     u16 oct, rem;
     if (c->kind == MUTED)
         return;
     if (c->mp_act)
-        p += shr8(&c->mp.val);
+        p += c->mp_last;
     if (p < 0)
         p = 0;
     if (p >= 36 * 256)
@@ -215,8 +234,8 @@ static void set_pitch(MCh *c)
         if (((blk << 11) | fn) == c->lastfreq)
             return;
         c->lastfreq = (blk << 11) | fn;
-        fm_reg(c->kind, 0xA4, (blk << 3) | (fn >> 8));
-        fm_reg(c->kind, 0xA0, fn & 0xFF);
+        ym_put(ch_part[c->kind], 0xA4 + ch_off[c->kind], (blk << 3) | (fn >> 8));
+        ym_put(ch_part[c->kind], 0xA0 + ch_off[c->kind], fn & 0xFF);
     } else if (!c->noise) {
         u16 n = psg_tab[rem] >> oct;
         u8 v = c->kind & 1;

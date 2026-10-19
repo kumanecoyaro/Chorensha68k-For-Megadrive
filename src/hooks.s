@@ -10,6 +10,21 @@
     .text
 | (register-argument XSP calls h_xsp_set / h_xsp_set_obj / h_xobj_set: src/xsp_fast.s)
 
+| ---- allocation for effect objects (tools/relocate.py FX_INITS): every
+| other request gets "pool empty" (d0 = a0 = 0), the rest fn_040b6
+    .globl  h_alloc_fx, fx_alloc_toggle
+h_alloc_fx:
+    eori.w  #1, fx_alloc_toggle
+    beq.s   1f
+    jmp     0x10000 + 0x40b6                | ORIG_ROM + fn_040b6
+1:  moveq   #0, %d0
+    suba.l  %a0, %a0
+    rts
+
+    .bss
+fx_alloc_toggle: .word 0
+    .text
+
 | ---- C -> original code.  The original (XC compiled) code may clobber
 | d0-d2/a0-a2; gcc expects d2-d7/a2-a6 preserved.
 | long ocall(void *fn, long a1, long a2, long a3, long a4)
