@@ -54,6 +54,7 @@ class Track:
         self.q = 8
         self.detune = 0
         self.porta = 0
+        self.slide = 0
         self.legato = False          # $F7: the next note is not keyed off at its end
         self.tie = False             # previous note was tied
         self.keyon_delay = 0
@@ -104,6 +105,8 @@ class Track:
                     gate = max(1, ln - (256 - self.q))
                 # e[4]: this note is tied to the previous one (no key-on)
                 ev.append(('note', c - 0x80, ln, gate, self.tie))
+                self.slide = self.porta          # $F2 applies to this note only
+                self.porta = 0
                 self.tie = self.legato
                 self.legato = False
                 self.wait = ln - 1

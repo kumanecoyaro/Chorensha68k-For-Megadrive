@@ -35,7 +35,8 @@ typedef struct {
     u8 pan;
     u8 q;
     s16 detune;         /* 1/64 semitone */
-    s16 porta;          /* 1/256 of detune unit per tick */
+    s16 porta;          /* $F2: slide for the next note only, 1/256 detune per tick */
+    s16 slide;          /* slide of the note being played */
     u8 legato;          /* $F7 seen: the next note is not keyed off at its end */
     u8 tie;             /* previous note was tied: this note only changes pitch */
     u8 kdelay;
@@ -323,8 +324,10 @@ static void step(MCh *c)
             if (!tied)
                 key_off(c);
             c->note = cmd - 0x80;
+            c->pacc = 0;                            /* portamento: this note only */
+            c->slide = c->porta;
+            c->porta = 0;
             if (!tied) {
-                c->pacc = 0;
                 c->mp_act = c->mp_on;
                 if (c->mp_act)
                     lfo_reset(&c->mp, c->mp_w, c->mp_p, c->mp_a);
@@ -490,8 +493,8 @@ static void tick(void)
             u8 changed = 0;
             if (c->gate && --c->gate == 0)
                 key_off(c);
-            if (c->porta) {
-                c->pacc += c->porta;
+            if (c->slide) {
+                c->pacc += c->slide;
                 changed = 1;
             }
             if (c->mp_act) {
