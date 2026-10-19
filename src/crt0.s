@@ -1,0 +1,94 @@
+| Mega Drive startup: vector table, ROM header, hardware init, C runtime init.
+
+    .section .vectors, "ax"
+    .globl  _start
+    .long   0x00FFFE00          | initial SSP
+    .long   _start              | reset PC
+    .rept   22
+    .long   _exception
+    .endr
+    .long   _exception          | spurious
+    .long   _exception          | level 1
+    .long   _exception          | level 2 (ext)
+    .long   _exception          | level 3
+    .long   _hint               | level 4 (HBlank)
+    .long   _exception          | level 5
+    .long   _vint               | level 6 (VBlank)
+    .long   _exception          | level 7
+    .rept   32
+    .long   _exception          | traps / reserved
+    .endr
+
+    .section .header, "a"
+    .ascii  "SEGA MEGA DRIVE "                                  | 0x100 system
+    .ascii  "(C)FMBE 2026.OCT"                                  | 0x110 copyright
+    .ascii  "CHO REN SHA 68K PORT TEST                       " | 0x120 domestic name (48)
+    .ascii  "CHO REN SHA 68K PORT TEST                       " | 0x150 overseas name (48)
+    .ascii  "GM 00000000-00"                                    | 0x180 serial
+    .word   0x0000                                              | 0x18E checksum (patched)
+    .ascii  "J               "                                  | 0x190 I/O support
+    .long   0x00000000                                          | 0x1A0 ROM start
+    .long   _rom_end_m1                                         | 0x1A4 ROM end (patched)
+    .long   0x00FF0000                                          | 0x1A8 RAM start
+    .long   0x00FFFFFF                                          | 0x1AC RAM end
+    .ascii  "            "                                      | 0x1B0 SRAM (none)
+    .ascii  "            "                                      | 0x1BC modem
+    .ascii  "                                        "          | 0x1C8 notes
+    .ascii  "JUE             "                                  | 0x1F0 region
+
+    .text
+_start:
+    move.w  #0x2700, %sr
+    | TMSS
+    move.b  0xA10001, %d0
+    andi.b  #0x0F, %d0
+    beq.s   1f
+    move.l  #0x53454741, 0xA14000           | 'SEGA'
+1:
+    tst.w   0xC00004                        | clear pending VDP state
+    | Z80: request bus and hold reset
+    move.w  #0x100, 0xA11100
+    move.w  #0x100, 0xA11200
+    | PSG silence
+    lea     0xC00011, %a0
+    move.b  #0x9F, (%a0)
+    move.b  #0xBF, (%a0)
+    move.b  #0xDF, (%a0)
+    move.b  #0xFF, (%a0)
+    | clear RAM
+    lea     0xFF0000, %a0
+    move.w  #0x3FFF, %d0
+    moveq   #0, %d1
+2:  move.l  %d1, (%a0)+
+    dbra    %d0, 2b
+    | copy .data
+    lea     _etext, %a0
+    lea     _sdata, %a1
+    move.l  #_edata, %d0
+    sub.l   #_sdata, %d0
+    lsr.l   #1, %d0
+    beq.s   4f
+    subq.l  #1, %d0
+3:  move.w  (%a0)+, (%a1)+
+    dbra    %d0, 3b
+4:
+    lea     0x00FFFE00, %sp
+    jsr     main
+5:  bra.s   5b
+
+_exception:
+    rte
+
+_hint:
+    rte
+
+_vint:
+    movem.l %d0-%d1/%a0-%a1, -(%sp)
+    addq.w  #1, vblank_count
+    move.w  0xC00004, %d0                   | ack
+    movem.l (%sp)+, %d0-%d1/%a0-%a1
+    rte
+
+    .globl  _rom_end_m1
+    .set    _rom_end_m1, 0x000FFFFF
+    .section .note.GNU-stack,"",%progbits
