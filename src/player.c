@@ -67,6 +67,7 @@ void player_kill(void)
         return;
     t.x = player_x; t.y = player_y; t.rate = 0x10; t.info = 0x200;
     spawn_explosion(&t);
+    sound_request(0x28);
     player_dead = 0x60;
 }
 
@@ -154,6 +155,7 @@ void shots_update(void)
     if (!player_dead && shot_timer >= 0) {
         s16 t = shot_timer;
         if ((t & shot_mask) == 0) {
+            sound_request(0x20);
             if (t <= 7 && nfree > 0) {          /* centre shot */
                 Shot *s = &shots[freelist[--nfree]];
                 s->vx = 0;
@@ -214,5 +216,7 @@ int shots_hit(Obj *o)
             s->y = 0;
         }
     }
+    if (dmg)
+        sound_request(0x42);
     return dmg;
 }

@@ -34,6 +34,7 @@ int main(void)
     vdp_load_tiles(SPR_TILE_BASE, spr_tiles, SPR_TILE_COUNT);
     vdp_load_tiles(FONT_TILE_BASE, font_tiles, FONT_TILE_COUNT);
 
+    sound_init();
     tables_init(0x10);              /* fn_05170(B_4a0f4 = $10) */
     obj_init();
     stage_init();
@@ -62,6 +63,7 @@ int main(void)
         obj_update_all();
         bg_update();
         spr_end();
+        sound_update();
         make_score_line();
         frame_count++;
     }

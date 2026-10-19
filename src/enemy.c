@@ -219,6 +219,7 @@ static void zako_move(Obj *o)
         t.rate = 0x10;
         t.info = (o->info & 0xF0FF) | 0x200;
         spawn_explosion(&t);
+        sound_request(0x01);
         add_score(SCORE_190);               /* fn_06d9a */
         obj_free(o);
     }
@@ -294,6 +295,7 @@ static void ship_move(Obj *o)
         o->hp -= dmg;
         if (o->hp < 0) {
             spawn_big_explosion(o->x, o->y);
+            sound_request(0x03);
             add_score(SCORE_1F0);
             obj_free(o);
         }

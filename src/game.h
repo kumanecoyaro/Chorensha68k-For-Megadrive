@@ -93,6 +93,11 @@ void shots_update(void);                             /* fn_06470 */
 void player_kill(void);                              /* fn_06c0e */
 int shots_hit(Obj *o);                               /* fn_2f448 + fn_0416c: damage */
 
+/* ---- sound (sound.c) ---- */
+void sound_init(void);
+void sound_request(u8 no);                           /* fn_034ae: PCM number */
+void sound_update(void);
+
 /* ---- stage (stage.c) ---- */
 extern u16 frame_count;                              /* B_4a0ca */
 extern u16 rank;                                     /* B_4a0c8 */

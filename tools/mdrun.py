@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Headless Mega Drive test runner using a libretro core (e.g. Genesis Plus GX).
 
-usage: mdrun.py CORE.so ROM.bin FRAMES OUTPREFIX [--shot N,N,...] [--input SCRIPT]
+usage: mdrun.py CORE.so ROM.bin FRAMES OUTPREFIX [--shot N,N,...] [--input SCRIPT] [--wav]
 
 SCRIPT is a comma-separated list of  start-end:BUTTONS  entries, e.g.
   "60-400:R,100-500:B,400-700:L"  (U D L R A B C S = up down left right A B C start)
-Screenshots are written as OUTPREFIX_NNNNN.png.
+Screenshots are written as OUTPREFIX_NNNNN.png, audio (--wav) as OUTPREFIX.wav.
 """
-import ctypes as C, sys, os
+import ctypes as C, sys, os, wave
 from PIL import Image
 
 RETRO_ENV_SET_PIXEL_FORMAT = 10
@@ -32,12 +32,14 @@ STATE_CB = C.CFUNCTYPE(C.c_int16, C.c_uint, C.c_uint, C.c_uint, C.c_uint)
 
 def main():
     core, rom, frames, prefix = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
-    shots = set(); script = []
+    shots = set(); script = []; audio = None
     args = sys.argv[5:]
     while args:
         a = args.pop(0)
         if a == '--shot':
             shots = {int(v) for v in args.pop(0).split(',')}
+        elif a == '--wav':
+            audio = bytearray()
         elif a == '--input':
             for ent in args.pop(0).split(','):
                 rng, btn = ent.split(':')
@@ -77,8 +79,13 @@ def main():
                 return 1
         return 0
 
+    def audio_batch(data, frames):
+        if audio is not None:
+            audio.extend(C.string_at(data, frames * 4))
+        return frames
+
     cbs = [ENV_CB(env), VIDEO_CB(video), AUDIO_CB(lambda l, r: None),
-           AUDIOB_CB(lambda d, n: n), POLL_CB(lambda: None), STATE_CB(inp)]
+           AUDIOB_CB(audio_batch), POLL_CB(lambda: None), STATE_CB(inp)]
     lib.retro_set_environment(cbs[0])
     lib.retro_set_video_refresh(cbs[1])
     lib.retro_set_audio_sample(cbs[2])
@@ -98,6 +105,15 @@ def main():
             state['img'].save(f'{prefix}_{f:05d}.png')
     if state['img'] is not None:
         state['img'].save(f'{prefix}_last.png')
+    lib.retro_get_memory_data.restype = C.c_void_p
+    lib.retro_get_memory_size.restype = C.c_size_t
+    ram = lib.retro_get_memory_data(2)
+    if ram:
+        open(prefix + '.ram', 'wb').write(C.string_at(ram, lib.retro_get_memory_size(2)))
+    if audio is not None:
+        w = wave.open(prefix + '.wav', 'wb')
+        w.setnchannels(2); w.setsampwidth(2); w.setframerate(44100)
+        w.writeframes(bytes(audio)); w.close()
     lib.retro_deinit()
 
 if __name__ == '__main__':
