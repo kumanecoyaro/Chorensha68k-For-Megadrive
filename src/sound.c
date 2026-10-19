@@ -26,11 +26,12 @@ extern const u16 z80_driver_size;
 
 #ifdef Z80_PEEK
 u8 z80_peek[64][4];
+u16 qmax_after, qmax_frame, qdrop;
 #endif
 static u8 req_no;
 static u16 play_pr, play_frames;
 
-#define QMAX 600
+#define QMAX 1536
 static u8 queue[QMAX];          /* pending 3-byte writes: part offset, reg, value */
 static u16 qlen;
 static u16 ym_shadow[2][256];  /* last value written, $100 = unknown */
@@ -54,8 +55,38 @@ u16 ym_log_n;
 u8 ym_log[6000 * 4];
 #endif
 
+
+/* move queued writes into the Z80 ring; returns the number of bytes moved
+ * (bus must not be held by the caller) */
+static u16 ym_flush(void)
+{
+    u16 i, n;
+    u8 rd, wr, room;
+    if (!qlen)
+        return 0;
+    z80_get_bus();
+    rd = Z80_RAM[RING_RD];
+    wr = Z80_RAM[RING_WR];
+    room = (u8)(rd - wr - 1);
+    n = qlen;
+    if (n > room)
+        n = room - room % 3;
+    for (i = 0; i < n; i++)
+        Z80_RAM[RING + wr++] = queue[i];
+    Z80_RAM[RING_WR] = wr;
+    z80_release_bus();
+    for (i = n; i < qlen; i++)
+        queue[i - n] = queue[i];
+    qlen -= n;
+    return n;
+}
+
+/* never drops a write: when the queue is full, wait for the Z80 to make room */
 static void ym_put(u8 part, u8 reg, u8 val)
 {
+#ifdef Z80_PEEK
+    { extern u16 qdrop; if (qlen + 3 > QMAX) qdrop++; }   /* times we had to wait */
+#endif
 #ifdef YM_LOG
 #ifndef YM_LOG_FROM
 #define YM_LOG_FROM 0
@@ -65,8 +96,8 @@ static void ym_put(u8 part, u8 reg, u8 val)
         l[0] = (u8)frame_count; l[1] = part; l[2] = reg; l[3] = val;
     }
 #endif
-    if (qlen + 3 > QMAX)
-        return;
+    while (qlen + 3 > QMAX)
+        ym_flush();
     queue[qlen++] = part << 1;
     queue[qlen++] = reg;
     queue[qlen++] = val;
@@ -120,6 +151,9 @@ void sound_init(void)
 /* fn_034ae */
 void sound_request(u8 no)
 {
+#ifdef NO_SFX
+    return;
+#endif
     if (!pcm_table[no].length)
         return;
     if (req_no && pcm_table[no].priority < pcm_table[req_no].priority)
@@ -131,8 +165,6 @@ void sound_request(u8 no)
 void sound_update(void)
 {
     const PcmEntry *e = NULL;
-    u16 i, n;
-    u8 rd, wr, room;
 
     if (play_frames && --play_frames == 0) {
         ym_put(0, 0x2B, 0x00);      /* effect over: FM6 back to the music */
@@ -169,25 +201,12 @@ void sound_update(void)
         play_pr = e->priority;
         play_frames = (u16)(len >> 8) + 1;          /* ~260 samples per frame */
     }
-    rd = Z80_RAM[RING_RD];
-    wr = Z80_RAM[RING_WR];
+    z80_release_bus();
+    ym_flush();
 #ifdef Z80_PEEK
     {
-        extern u8 z80_peek[64][4];
-        u8 *pk = z80_peek[frame_count & 63];
-        pk[0] = Z80_RAM[0x1FF8]; pk[1] = rd; pk[2] = wr; pk[3] = (u8)qlen;
+        extern u16 qmax_after, qmax_frame, qdrop;
+        if (qlen > qmax_after) { qmax_after = qlen; qmax_frame = frame_count; }
     }
 #endif
-    room = (u8)(rd - wr - 1);
-    n = qlen;
-    if (n > room)
-        n = room - room % 3;
-    for (i = 0; i < n; i++)
-        Z80_RAM[RING + wr++] = queue[i];
-    Z80_RAM[RING_WR] = wr;
-    z80_release_bus();
-    /* keep what did not fit for the next frame */
-    for (i = n; i < qlen; i++)
-        queue[i - n] = queue[i];
-    qlen -= n;
 }
