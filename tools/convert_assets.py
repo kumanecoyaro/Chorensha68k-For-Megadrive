@@ -4,11 +4,10 @@
 usage: convert_assets.py SZ2.X XSP_DAT_DIR OUT_DIR
 
 Produces OUT_DIR/assets.c and OUT_DIR/assets.h containing:
-  * 4 MD palettes (CRAM words)
-  * BG tiles, chip table (32x32 px chips as 4x4 MD name-table words), maps bg0/bg1
-  * (sprites: tools/convert_sprites.py)
-  * tables lifted from SZ2.X: trig table (speed 0..15 x 256 angles), atan table,
-    random table, shot power table
+  * MD palettes 0 / 1 (far / near BG layer; 2 / 3 come from convert_sprites.py)
+  * BG tiles and the chip tables (32x32 px chips as 4x4 MD name-table words)
+    used when the original code draws a chip (the maps themselves are read by
+    the original code, see tools/relocate.py)
 """
 import os, struct, sys, collections
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -81,110 +80,6 @@ class TileSet:
             self.tiles.append(data)
         return self.index[data]
 
-# ---------------------------------------------------------------- sprites
-class SpriteSrc:
-    def __init__(self, xsp_dir):
-        self.d = xsp_dir
-        self.cache = {}
-    def file(self, name):
-        if name not in self.cache:
-            self.cache[name] = open(os.path.join(self.d, name), 'rb').read()
-        return self.cache[name]
-    def ref_pixels(self, name, idx, xsp=None):
-        """Composite one XSP ref (object) frame -> {(x,y): color} relative to object center."""
-        ref = self.file(name + '.ref'); frm = self.file(name + '.frm')
-        data = self.file((xsp or name) + '.xsp')
-        c, p = struct.unpack_from('>hI', ref, idx * 8)
-        ax = ay = 0; pix = {}
-        for j in range(c):
-            vx, vy, pt, rv = struct.unpack_from('>hhhH', frm, p + j * 8)
-            ax += vx; ay += vy
-            px = pcg16(data, pt)
-            for y in range(16):
-                for x in range(16):
-                    sx = 15 - x if rv & 0x4000 else x
-                    sy = 15 - y if rv & 0x8000 else y
-                    v = px[sy * 16 + sx]
-                    if v:
-                        pix[(ax - 8 + x, ay - 8 + y)] = v
-        return pix
-    def pcg_pixels(self, fname, idx):
-        px = pcg16(self.file(fname), idx)
-        return {(x - 8, y - 8): px[y * 16 + x] for y in range(16) for x in range(16) if px[y * 16 + x]}
-
-def split_sprite(pix, group, x68pal, sprpal, tiles):
-    """Pixel dict -> list of MD sprite pieces (dx, dy, w, h, tile, pal)."""
-    if not pix:
-        return []
-    xs = [k[0] for k in pix]; ys = [k[1] for k in pix]
-    x0, y0 = min(xs), min(ys)
-    tw = (max(xs) - x0) // 8 + 1; th = (max(ys) - y0) // 8 + 1
-    def tile_at(tx, ty):
-        out = [0] * 64; used = False
-        for y in range(8):
-            for x in range(8):
-                v = pix.get((x0 + tx * 8 + x, y0 + ty * 8 + y))
-                if v:
-                    out[y * 8 + x] = group.index(x68pal[v]); used = True
-        return out if used else None
-    grid = {(tx, ty): tile_at(tx, ty) for tx in range(tw) for ty in range(th)}
-    pieces = []
-    for by in range(0, th, 4):
-        for bx in range(0, tw, 4):
-            cells = [(tx, ty) for tx in range(bx, min(bx + 4, tw)) for ty in range(by, min(by + 4, th)) if grid[(tx, ty)]]
-            if not cells:
-                continue
-            ax0 = min(c[0] for c in cells); ax1 = max(c[0] for c in cells)
-            ay0 = min(c[1] for c in cells); ay1 = max(c[1] for c in cells)
-            w = ax1 - ax0 + 1; h = ay1 - ay0 + 1
-            first = None
-            # MD sprite tiles are column-major and must be consecutive
-            block = []
-            for tx in range(ax0, ax1 + 1):
-                for ty in range(ay0, ay1 + 1):
-                    block.append(tile_bytes(grid[(tx, ty)] or [0] * 64))
-            key = b''.join(block)
-            first = tiles.add_block(key, len(block))
-            pieces.append((x0 + ax0 * 8, y0 + ay0 * 8, w, h, first, sprpal))
-    return pieces
-
-class SpriteTiles:
-    def __init__(self, base):
-        self.base = base; self.data = bytearray(); self.blocks = {}
-    def add_block(self, key, n):
-        if key not in self.blocks:
-            self.blocks[key] = self.base + len(self.data) // 32
-            self.data += key
-        return self.blocks[key]
-
-
-FONT_CHARS = ' 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-:!.'
-FONT_ROWS = {
- ' ': '', '0': '0e11131519110e', '1': '040c040404040e', '2': '0e11010e10101f', '3': '1e01010e01011e',
- '4': '02060a121f0202', '5': '1f101e0101111e', '6': '0e10101e11110e', '7': '1f010204080808',
- '8': '0e11110e11110e', '9': '0e11110f01010e', 'A': '0e11111f111111', 'B': '1e11111e11111e',
- 'C': '0e11101010110e', 'D': '1e11111111111e', 'E': '1f10101e10101f', 'F': '1f10101e101010',
- 'G': '0f10101311110f', 'H': '1111111f111111', 'I': '0e04040404040e', 'J': '0701010101110e',
- 'K': '11121418141211', 'L': '1010101010101f', 'M': '111b1515111111', 'N': '11191513111111',
- 'O': '0e11111111110e', 'P': '1e11111e101010', 'Q': '0e111111150e01', 'R': '1e11111e141211',
- 'S': '0f10100e01011e', 'T': '1f040404040404', 'U': '1111111111110e', 'V': '11111111110a04',
- 'W': '11111115151b11', 'X': '11110a040a1111', 'Y': '11110a04040404', 'Z': '1f01020408101f',
- '-': '0000001f000000', ':': '00040000000400', '!': '04040404040004', '.': '00000000000c0c',
-}
-
-def font_glyphs():
-    """8x8 glyph pixel lists (1 = ink) for FONT_CHARS, drawn with a 1px shadow-free 5x7 face."""
-    out = []
-    for ch in FONT_CHARS:
-        rows = bytes.fromhex(FONT_ROWS[ch]) if FONT_ROWS[ch] else b''
-        px = [0] * 64
-        for y, b in enumerate(rows):
-            for x in range(5):
-                if b & (0x10 >> x):
-                    px[y * 8 + x + 1] = 1
-        out.append(px)
-    return out
-
 # ---------------------------------------------------------------- main
 def main(xpath, xsp_dir, out_dir):
     x = XFile(xpath)
@@ -238,15 +133,6 @@ def main(xpath, xsp_dir, out_dir):
     print(f'BG tiles {nbg}')
     font_base = 0xF000 // 32           # VRAM 0xF000-0xFFFF: text font (convert_sprites.py)
 
-    # ---- tables from SZ2.X
-    trig = struct.unpack_from('>16384h', img, 0x3e3bc)         # [32 speeds][256 angles][dx,dy]
-    atan = img[0x2fb68:0x2fb68 + 257]                          # index (ratio+128), ratio -128..128
-    rnd = struct.unpack_from('>1024H', img, 0x345e2)
-    shotdir = struct.unpack_from('>512h', img, 0x3dbbc)        # [angle][ref offset, info xor]
-    power = struct.unpack_from('>30h', img, 0x489a6)            # 5 levels x 6 words
-    zako_angle = img[0x489ea:0x489ea + 10]                      # joystick dir -> angle
-    classes = {t: struct.unpack_from('>IIIH', img, 0x46460 + t * 16) for t in (0x190, 0x1f0)}
-
     # ---------------------------------------------------------------- write C
     def arr(ctype, name, vals, per=16, fmt='{}'):
         s = [f'const {ctype} {name}[{len(vals)}] = {{']
@@ -268,14 +154,6 @@ def main(xpath, xsp_dir, out_dir):
     for ch in range(256):
         cw += chip_far.get(ch, [0] * 16)
     out.append(arr('u16', 'chip_far', cw, fmt='0x{:04x}'))
-    out.append(arr('u8', 'map_bg0', list(m0), 8))
-    out.append(arr('u8', 'map_bg1', list(m1), 8))
-    out.append(arr('s16', 'trig_tab', list(trig), 16))
-    out.append(arr('u8', 'atan_tab', list(atan), 16))
-    out.append(arr('u16', 'rand_tab', list(rnd), 16, '0x{:04x}'))
-    out.append(arr('s16', 'shotdir_tab', list(shotdir), 16))
-    out.append(arr('s16', 'power_tab', list(power), 6))
-    out.append(arr('u8', 'dir_angle_tab', list(zako_angle), 10))
     open(os.path.join(out_dir, 'assets.c'), 'w').write('\n'.join(out) + '\n')
 
     h = ['/* generated by tools/convert_assets.py - do not edit */',
@@ -284,10 +162,6 @@ def main(xpath, xsp_dir, out_dir):
     h += ['', 'extern const u16 pal_data[64];',
           f'extern const u32 bg_tiles[{len(alltiles)//4}];',
           'extern const u16 chip_near[4096];', 'extern const u16 chip_far[4096];',
-          'extern const u8 map_bg0[8192];', 'extern const u8 map_bg1[8192];',
-          'extern const s16 trig_tab[16384];', 'extern const u8 atan_tab[257];',
-          'extern const u16 rand_tab[1024];', 'extern const s16 shotdir_tab[512];',
-          'extern const s16 power_tab[30];', 'extern const u8 dir_angle_tab[10];',
           '#endif']
     open(os.path.join(out_dir, 'assets.h'), 'w').write('\n'.join(h) + '\n')
     for g in groups[:2]:

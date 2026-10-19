@@ -30,7 +30,7 @@ volatile u8 frame_ready;
 static u8 vbl_busy;
 
 #ifdef FRAME_PROBE
-u16 vprobe[64][3];
+u16 vprobe[64][4];
 u16 stamp(void);
 #endif
 void vblank_work(void)
@@ -59,9 +59,12 @@ void vblank_work(void)
 #endif
     bgm_service();
     music_update();
-    sound_update();
 #ifdef FRAME_PROBE
     vp[2] = stamp();
+#endif
+    sound_update();
+#ifdef FRAME_PROBE
+    vp[3] = stamp();
 #endif
     frame_count++;
     vbl_busy = 0;

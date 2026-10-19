@@ -69,6 +69,10 @@ def main():
     uc.mem_map(0xC00000, 0x10000)          # VDP
     last = collections.deque(maxlen=64)
     sym = dict((n, a) for a, n in syms)
+    span = None; spans = []
+    if '--span' in sys.argv:
+        a, b = sys.argv[sys.argv.index('--span') + 1].split(',')
+        span = (sym[a], sym[b])
     vint = struct.unpack('>I', data[0x78:0x7C])[0]
     rte_addr = data.index(b'\x4e\x73', vint)     # rte of _vint
     vs_addr = sym['x_vsync']; vs_lo = vs_addr; vs_hi = sym.get('x_xsp_out', vs_addr + 0x40)
@@ -83,6 +87,20 @@ def main():
         last.append(addr)
         if prof is not None:
             prof[addr] += 1
+        if span:
+            if addr == span[0]:
+                state['span0'] = state['n']
+                state['sh'] = collections.Counter()
+            elif addr == span[1] and 'span0' in state:
+                ln = state['n'] - state.pop('span0')
+                spans.append(ln)
+                if ln > state.get('spanmax', 0):
+                    state['spanmax'] = ln
+                    state['spanhist'] = state['sh']
+                if 3500 < ln < 5000:
+                    state['spanmid'] = state['sh']
+            elif 'span0' in state:
+                state['sh'][name(addr).split('+')[0]] += 1
         if addr == vs_addr:
             gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
             fl.append((gf, state['n'] - state.get('vs', 0) - state.get('wait', 0))); state['vs'] = state['n']; state['wait'] = 0
@@ -191,6 +209,13 @@ def main():
     for v in ('stat_rec', 'stat_calls', 'stat_pieces', 'stat_out'):
         if v in sym:
             print(v, struct.unpack('>I', uc.mem_read(sym[v], 4))[0])
+    if spans:
+        spans.sort()
+        print('biggest span:', state['spanhist'].most_common(12))
+        if 'spanmid' in state:
+            print('a 3500-5000 span:', state['spanmid'].most_common(12))
+        print('span calls', len(spans), 'median', spans[len(spans) // 2], 'p90', spans[len(spans) * 9 // 10],
+              'max', spans[-1], 'top', spans[-10:])
     if 'xsp_misses' in sym:
         print('cache misses', struct.unpack('>H', uc.mem_read(sym['xsp_misses'], 2))[0])
     print('stopped after', state['n'], 'insns,', state['vbl'], 'vblanks, pc', name(uc.reg_read(UC_M68K_REG_PC)))

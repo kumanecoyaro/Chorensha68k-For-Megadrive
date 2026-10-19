@@ -34,7 +34,7 @@ static u16 play_pr, play_frames;
 #define QMAX 1536
 static u8 queue[QMAX];          /* pending 3-byte writes: part offset, reg, value */
 static u16 qlen;
-static u16 ym_shadow[2][256];  /* last value written, $100 = unknown */
+u16 ym_shadow[2][256];         /* last value written, $100 = unknown */
 static u8 dac_on;
 static u8 music_pan6 = 0xC0;   /* FM6 pan wanted by the music ($B6, shared with the DAC) */
 
@@ -61,7 +61,8 @@ u8 ym_log[6000 * 4];
 static u16 ym_flush(void)
 {
     u16 i, n;
-    u8 rd, wr, room;
+    u8 rd, room;
+    u16 wr;
     if (!qlen)
         return 0;
     z80_get_bus();
@@ -79,8 +80,20 @@ static u16 ym_flush(void)
     n = qlen;
     if (n > room)
         n = room - room % 3;
-    for (i = 0; i < n; i++)
-        Z80_RAM[RING + wr++] = queue[i];
+    {   /* copy in at most two runs (the ring wraps at 256) */
+        const u8 *src = queue;
+        u16 left = n;
+        while (left) {
+            u16 run = 256 - wr;
+            volatile u8 *dst = &Z80_RAM[RING + wr];
+            if (run > left)
+                run = left;
+            left -= run;
+            wr = (wr + run) & 255;
+            while (run--)
+                *dst++ = *src++;
+        }
+    }
     Z80_RAM[RING_WR] = wr;
     z80_release_bus();
     for (i = n; i < qlen; i++)
@@ -90,7 +103,7 @@ static u16 ym_flush(void)
 }
 
 /* never drops a write: when the queue is full, wait for the Z80 to make room */
-static void ym_put(u8 part, u8 reg, u8 val)
+void ym_put(u8 part, u8 reg, u8 val)
 {
 #ifdef Z80_PEEK
     { extern u16 qdrop; if (qlen + 3 > QMAX) qdrop++; }   /* times we had to wait */

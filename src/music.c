@@ -58,6 +58,9 @@ typedef struct {
     u8 used_noise;
     u16 lastfreq;       /* block/F-number last written (skip identical writes) */
     s16 lastatt;        /* attenuation + volume LFO last written to the carriers' TL */
+    s16 mp_last;        /* pitch LFO value (>> 8) the pitch was last set with */
+    u8 dirty;           /* bit 0: pitch, bit 1: volume LFO to apply at the end of the VBlank */
+    const u8 *setvoice; /* voice whose operator registers were last written */
     const u8 *lastvoice;
     u8 center;          /* always panned centre: its doubling channel is muted */
 } MCh;
@@ -90,9 +93,21 @@ void psg_write(u8 v);
 static const u8 ch_part[6] = { 0, 0, 0, 1, 1, 1 };
 static const u8 ch_off[6] = { 0, 1, 2, 0, 1, 2 };
 
-static void fm_reg(u8 c, u8 reg, u8 val)
+extern u16 ym_shadow[2][256];
+void ym_put(u8 part, u8 reg, u8 val);
+
+/* ym_write() with the redundant-write check inlined (most calls end there) */
+static inline void fm_reg(u8 c, u8 reg, u8 val)
 {
-    ym_write(ch_part[c], reg + ch_off[c], val);
+    u8 p = ch_part[c], r = reg + ch_off[c];
+    if ((reg & 0xF0) == 0xA0 || (p && r == 0xB6)) {
+        ym_write(p, r, val);            /* frequency pairs / FM6 pan (DAC) */
+        return;
+    }
+    if (ym_shadow[p][r] == val)
+        return;
+    ym_shadow[p][r] = val;
+    ym_put(p, r, val);
 }
 
 static const u8 *find_voice(u8 no)
@@ -138,6 +153,9 @@ static void fm_voice(MCh *c)
     u8 i;
     if (!v || c->kind == MUTED)
         return;
+    if (v == c->setvoice)
+        return;                         /* this channel's operators already hold it */
+    c->setvoice = v;
     for (i = 0; i < 4; i++) {
         u8 o = i * 4;
         fm_reg(c->kind, 0x30 + o, v[4 + i]);
@@ -354,8 +372,10 @@ static void step(MCh *c)
             c->porta = 0;
             if (!tied) {
                 c->mp_act = c->mp_on;
-                if (c->mp_act)
+                if (c->mp_act) {
                     lfo_reset(&c->mp, c->mp_w, c->mp_p, c->mp_a);
+                    c->mp_last = (s16)shr8(&c->mp.val);
+                }
                 c->ma_act = c->ma_on;
                 if (c->ma_act)
                     lfo_reset(&c->ma, c->ma_w, c->ma_p, c->ma_a);
@@ -507,8 +527,11 @@ static void tick(void)
     u8 i;
     for (i = 0; i < NCH; i++) {
         MCh *c = &ch[i];
-        step(c);
-        if (c->note < 0)
+        if (c->wait)                    /* (step's common case, inlined) */
+            c->wait--;
+        else
+            step(c);
+        if (c->note < 0 || c->kind == MUTED)
             continue;
         if (c->delay) {
             if (--c->delay == 0)
@@ -523,17 +546,21 @@ static void tick(void)
                 changed = 1;
             }
             if (c->mp_act) {
+                s16 v;
                 lfo_tick(&c->mp);
-                changed = 1;
+                v = (s16)shr8(&c->mp.val);
+                if (v != c->mp_last) {          /* pitch only moves in whole steps */
+                    c->mp_last = v;
+                    changed = 1;
+                }
             }
+            /* LFO / slide register updates are applied once per VBlank
+             * (music_update), not at every tick */
             if (changed)
-                set_pitch(c);
+                c->dirty |= 1;
             if (c->ma_act) {
                 lfo_tick(&c->ma);
-                if (c->kind < 0x10)
-                    fm_tl(c, (s16)shr8(&c->ma.val));
-                else if (c->on && c->kind != MUTED)
-                    psg_vol(c, 1);
+                c->dirty |= 2;
             }
         }
     }
@@ -602,6 +629,23 @@ void music_update(void)
         while (tick_acc >= 0x10000) {
             tick_acc -= 0x10000;
             tick();
+        }
+    }
+    {
+        u8 i;
+        for (i = 0; i < NCH; i++) {
+            MCh *c = &ch[i];
+            if (!c->dirty)
+                continue;
+            if (c->dirty & 1)
+                set_pitch(c);
+            if ((c->dirty & 2) && c->ma_act) {
+                if (c->kind < 0x10)
+                    fm_tl(c, (s16)shr8(&c->ma.val));
+                else if (c->on)
+                    psg_vol(c, 1);
+            }
+            c->dirty = 0;
         }
     }
 }

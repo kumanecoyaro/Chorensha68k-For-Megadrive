@@ -25,7 +25,6 @@
 #define NSLOT (CACHE_A_SLOTS + CACHE_B_SLOTS)
 #define HASH_SIZE 512                   /* open addressing, key = block << 4 | palette */
 #define KEY_EMPTY 0xFFFF
-#define KEY_DEAD  0xFFFE
 #define NO_ENTRY  0xFFFF
 
 #define STAGE_BYTES 4096            /* tiles converted per frame, DMAed in VBlank */
@@ -48,7 +47,6 @@ u16 ncalls;
 u16 pal_attr[16];                       /* $8000 | MD palette << 13 for each X68000 palette */
 
 static u16 slot_ent[NSLOT];             /* hash entry holding the slot, NO_ENTRY = free */
-static u16 hash_dead;
 static u16 clock_a, clock_b;
 u16 xsp_misses;
 
@@ -71,24 +69,23 @@ static u16 slot_tile(u16 s)
     return s < CACHE_A_SLOTS ? CACHE_A_BASE + s * 4 : CACHE_B_BASE + (s - CACHE_A_SLOTS) * 16;
 }
 
-static void hash_rebuild(void)
+/* remove entry h (linear probing, backward-shift deletion: no tombstones) */
+static void hash_remove(u16 h)
 {
-    static HEnt old[HASH_SIZE];
-    u16 i, h;
-    for (i = 0; i < HASH_SIZE; i++) {
-        old[i] = htab[i];
-        htab[i].key = KEY_EMPTY;
-    }
-    for (i = 0; i < HASH_SIZE; i++) {
-        if (old[i].key >= KEY_DEAD)
+    u16 j = h, k;
+    for (;;) {
+        j = (j + 1) & (HASH_SIZE - 1);
+        if (htab[j].key == KEY_EMPTY)
+            break;
+        k = hslot(htab[j].key);
+        /* entry j may move to h unless its home lies cyclically in (h, j] */
+        if (h <= j ? (k > h && k <= j) : (k > h || k <= j))
             continue;
-        h = hslot(old[i].key);
-        while (htab[h].key != KEY_EMPTY)
-            h = (h + 1) & (HASH_SIZE - 1);
-        htab[h] = old[i];
-        slot_ent[old[i].slot] = h;
+        htab[h] = htab[j];
+        slot_ent[htab[h].slot] = h;
+        h = j;
     }
-    hash_dead = 0;
+    htab[h].key = KEY_EMPTY;
 }
 
 /* called by xsp_fast.s when (block, palette) is not in VRAM */
@@ -119,15 +116,11 @@ u16 cache_miss(u16 key)
         if (!--i)
             return 0;               /* every slot is in use this frame */
     }
-    if (slot_ent[s] != NO_ENTRY) {
-        htab[slot_ent[s]].key = KEY_DEAD;
-        hash_dead++;
-    }
+    if (slot_ent[s] != NO_ENTRY)
+        hash_remove(slot_ent[s]);
     h = hslot(key);
-    while (htab[h].key < KEY_DEAD)
+    while (htab[h].key != KEY_EMPTY)
         h = (h + 1) & (HASH_SIZE - 1);
-    if (htab[h].key == KEY_DEAD)
-        hash_dead--;
     e = &htab[h];
     e->key = key;
     e->tile = slot_tile(s);
@@ -147,8 +140,6 @@ u16 cache_miss(u16 key)
     up[nup].words = n * 16;
     nup++;
     stage_len += n * 32;
-    if (hash_dead > 128)
-        hash_rebuild();
     return slot_tile(s);
 }
 
