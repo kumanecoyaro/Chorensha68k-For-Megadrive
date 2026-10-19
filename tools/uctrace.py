@@ -99,7 +99,7 @@ def main():
         if addr in (sym.get('h_xsp_set'), sym.get('h_xobj_set')) and pcghist is not None:
             sp = uc.reg_read(UC_M68K_REG_A7)
             ret = struct.unpack('>I', uc.mem_read(sp, 4))[0]
-            if ret >= sym.get('h_xsp_set', 0) and ret < sym.get('h_xsp_set', 0) + 0x40:   # via xsp_set_obj
+            if sym.get('h_xsp_set_obj', 0) <= ret < sym.get('h_xsp_set', 0):   # via xsp_set_obj
                 ret = struct.unpack('>I', uc.mem_read(sp + 16, 4))[0]
             kind = 'pcg' if addr == sym.get('h_xsp_set') else 'ref'
             pcghist[(fnname(ret - 0x10000), kind, uc.reg_read(UC_M68K_REG_D2) & 0xFFFF)] += 1
@@ -276,6 +276,10 @@ def main():
             agg[(f, k)][0] += c; agg[(f, k)][1].add(v)
         for (f, k), (c, vs) in sorted(agg.items(), key=lambda t: -t[1][0])[:40]:
             print(f'  {f} {k} {c:6d} ids {min(vs):#x}-{max(vs):#x}')
+        if '--calls-dump' in sys.argv:
+            with open(sys.argv[sys.argv.index('--calls-dump') + 1], 'w') as f:
+                for (fn, k, v), c in sorted(pcghist.items()):
+                    f.write(f'{fn} {k} {v:#x} {c}\n')
     if spans:
         spans.sort()
         print('biggest span:', state['spanhist'].most_common(12))

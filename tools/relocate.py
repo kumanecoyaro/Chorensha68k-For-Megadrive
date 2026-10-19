@@ -66,6 +66,8 @@ HOOKS = [
     (0x39e16, 'x_joydir', 'c'),
     (0x39e58, 'x_joybtn', 'c'),
     (0x39e7a, 'x_joyget', 'c'),
+    # replay (removed): the recorder / player input functions read the pad
+    # directly, replay start / end / buffer setup do nothing, B_4a0a4 stays 0
     (0x00f26, 'x_input_dir', 'c'),      # replay recorder / player
     (0x01048, 'x_input_btn', 'c'),      # replay recorder / player (buttons)
     (0x00f06, 'x_nop', 'c'),
@@ -104,18 +106,20 @@ HOOKS = [
     (0x39750, 'x_nop', 'c'),
 ]
 
-# Effect objects (explosions, debris, sparks, the stage 1 opening debris
-# field): their init functions get every other object allocation refused
+# Explosion objects: their init functions get every other object allocation refused
 # (`jsr fn_040b6` -> `jsr h_alloc_fx`), halving the number of effect
 # objects - their logic and their sprites.
 FX_INITS = [
-    0x0ec0e, 0x0ece0, 0x0edb2, 0x0ee82,         # classes $81-$84: opening debris
+    0x0ee82, 0x0ef7e,                           # $84 $85 explosions (expl4)
     0x0ffd0, 0x100b2, 0x10154, 0x101f8,         # $101 $102 $103 $105 explosions
     0x102a6,                                    # $10e
 ]
-# particles (classes $122-$124: one sprite flying off with a lifetime): every
-# allocation is refused (`jsr fn_040b6` -> `jsr h_alloc_none`)
-PARTICLE_INITS = [0x10a1a, 0x10abc, 0x10b7c]
+# particles (parts flying off destroyed enemies, sparks): every allocation is
+# refused (`jsr fn_040b6` -> `jsr h_alloc_none`)
+PARTICLE_INITS = [
+    0x0ec0e, 0x0ece0, 0x0edb2,                  # $81-$83: debris.sp parts
+    0x10a1a, 0x10abc, 0x10b7c,                  # $122-$124: sparks / debris
+]
 
 # immediate patches: (address, old bytes hex, new bytes hex, comment)
 def patches():
