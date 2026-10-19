@@ -48,7 +48,7 @@ u16 pal_attr[16];                       /* $8000 | MD palette << 13 for each X68
 
 static u16 slot_ent[NSLOT];             /* hash entry holding the slot, NO_ENTRY = free */
 static u16 clock_a, clock_b;
-u16 xsp_misses;
+u16 xsp_misses, xsp_fail;
 
 static u8 stage[STAGE_BYTES];
 static u16 stage_len;
@@ -99,8 +99,10 @@ u16 cache_miss(u16 key)
     HEnt *e;
     xsp_misses++;
     n = b->ntiles;
-    if (stage_len + n * 32 > STAGE_BYTES || nup >= MAX_UP)
+    if (stage_len + n * 32 > STAGE_BYTES || nup >= MAX_UP) {
+        xsp_fail++;
         return 0;
+    }
     if (n <= 4) {
         clk = &clock_a; start = 0; i = CACHE_A_SLOTS;
     } else {
@@ -113,8 +115,10 @@ u16 cache_miss(u16 key)
             *clk = 0;
         if (slot_ent[s] == NO_ENTRY || htab[slot_ent[s]].stamp != xframe)
             break;
-        if (!--i)
+        if (!--i) {
+            xsp_fail++;
             return 0;               /* every slot is in use this frame */
+        }
     }
     if (slot_ent[s] != NO_ENTRY)
         hash_remove(slot_ent[s]);

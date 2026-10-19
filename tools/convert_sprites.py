@@ -34,7 +34,8 @@ XSP = ['title', 'bullet32', 'bullet_l', 'sonic1', 'sonic2', 'expl2', 'expl3', 'e
 REF_EXTRA = {'sonic2': [('ele_arc', 0x50)], 'spark': [('debris1', 0xC4)]}
 
 TEXT_XPAL = 2          # X68000 sprite palette used as the text palette
-MERGE_MIN = 4          # refs with more frm entries are composited into larger blocks
+MERGE_MIN = 1          # refs with more frm entries are composited into blocks of up to 32x32
+                       # (a 32x32 enemy made of four 16x16 PCGs becomes one hardware sprite)
 # effects made of many scattered / mirrored PCGs: compositing them would cost
 # megabytes of ROM, so they keep one hardware sprite per PCG
 NO_MERGE = {'debris1', 'debris2', 'expl4', 'sonic1', 'sonic2', 'ele_arc'}
@@ -110,7 +111,7 @@ def main(xsp, out):
             groups = collections.OrderedDict()
             ax = ay = 0
             if cnt <= MERGE_MIN or name in NO_MERGE:
-                # few PCGs: one hardware sprite each, flips done by the VDP
+                # a single PCG / scattered effects: one hardware sprite per PCG, flips done by the VDP
                 for j in range(cnt):
                     vx, vy, pt, info = struct.unpack_from('>hhhH', frm, off + j * 8)
                     ax += vx; ay += vy

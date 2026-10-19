@@ -271,9 +271,10 @@ def main():
             v = [byf[f] for f in range(a, a + 200) if f in byf]
             if v:
                 print(f'game frames {a:5d}-{a + 199:5d}: avg {sum(v) // len(v):6d} max {max(v):6d} insns')
-    for v in ('stat_rec', 'stat_calls', 'stat_pieces', 'stat_out'):
+    for v in ('stat_rec', 'stat_calls', 'stat_pieces', 'stat_out', 'xsp_misses', 'xsp_fail'):
         if v in sym:
-            print(v, struct.unpack('>I', uc.mem_read(sym[v], 4))[0])
+            w = 2 if v.startswith('xsp_') else 4
+            print(v, int.from_bytes(uc.mem_read(sym[v], w), 'big'))
     if chipcount:
         print('BG chips per 50 game frames:', sorted(chipcount.items())[:40])
     if pcghist:
