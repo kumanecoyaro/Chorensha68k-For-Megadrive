@@ -97,6 +97,9 @@ int shots_hit(Obj *o);                               /* fn_2f448 + fn_0416c: dam
 void sound_init(void);
 void sound_request(u8 no);                           /* fn_034ae: PCM number */
 void sound_update(void);
+void music_play(u8 no);                              /* fn_03590: BGM number */
+void music_stop(void);
+void music_update(void);
 
 /* ---- stage (stage.c) ---- */
 extern u16 frame_count;                              /* B_4a0ca */

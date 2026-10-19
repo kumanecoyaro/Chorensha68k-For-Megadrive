@@ -31,16 +31,19 @@ def main(build, rom):
     raw = os.path.getsize(os.path.join(build, 'game.raw'))
     pcm = os.path.getsize(os.path.join(build, 'gen', 'pcm.bin'))
     syms = symsizes(os.path.join(build, 'game.elf'))
+    bgm = int(open(os.path.join(build, 'gen', 'bgm.h')).read().split('BGM_DATA_SIZE')[1].split()[0])
     asset_syms = ['bg_tiles', 'spr_tiles', 'font_tiles', 'chip_near', 'chip_far', 'map_bg0', 'map_bg1',
                   'frame_pieces', 'frame_start', 'pal_data']
-    table_syms = ['trig_tab', 'atan_tab', 'rand_tab', 'shotdir_tab', 'power_tab', 'dir_angle_tab', 'pcm_table']
+    table_syms = ['trig_tab', 'atan_tab', 'rand_tab', 'shotdir_tab', 'power_tab', 'dir_angle_tab', 'pcm_table',
+                  'fnum_tab', 'psg_tab', 'tempo_tab', 'z80_driver']
     a = sum(syms.get(s, 0) for s in asset_syms)
     t = sum(syms.get(s, 0) for s in table_syms)
     print('== current build ==')
     print(f'  PCM samples (all {pcm} bytes)   {kb(pcm)}')
+    print(f'  BGM (all 13 MDX songs)         {kb(bgm)}')
     print(f'  graphics / maps (stage 1 part) {kb(a)}')
     print(f'  tables from SZ2.X              {kb(t)}')
-    print(f'  code + other                   {kb(raw - pcm - a - t)}')
+    print(f'  code + other                   {kb(raw - pcm - bgm - a - t)}')
     print(f'  image {kb(raw)}  -> ROM file {kb(rom_size)} (padded to 128 KB)')
 
     # ---- projection: every asset converted
@@ -62,9 +65,6 @@ def main(build, rom):
         bg += len(combos) * 32 + len(chips) * 16 * 2 * 2     # tiles + chip tables for 2 planes
     maps = sum(len(load_map(os.path.join(xsp, m))[2]) for m in ('map.bg0', 'map.bg1'))
     pals = sum(1 for f in files if f.endswith('.pal')) * 4 * 32
-    bgm = sum(os.path.getsize(os.path.join(disk, 'BGM_DAT', 'original', f))
-              for f in os.listdir(os.path.join(disk, 'BGM_DAT', 'original')) if f.endswith('.MDX'))
-    bgm_md = bgm * 3                           # MDX (OPM) -> YM2612 sequence data, generous
     code = 0x3C104                             # SZ2.X text: 68000 -> 68000 port, similar size
     tables = 0xDEB0 + 0x8000                   # SZ2.X data section + trig table already used
     rows = [('PCM (all 62 entries, 8-bit 15.625 kHz)', pcm),
@@ -73,7 +73,7 @@ def main(build, rom):
             ('BG tiles + chip tables (map / end)', bg),
             ('BG maps (bg0 / bg1)', maps),
             ('palettes', pals),
-            ('BGM (MDX x3 after conversion, estimate)', bgm_md),
+            ('BGM (13 MDX songs + voices, measured)', bgm),
             ('game code (SZ2.X text size)', code),
             ('data tables (SZ2.X data + trig)', tables)]
     total = sum(v for _, v in rows)

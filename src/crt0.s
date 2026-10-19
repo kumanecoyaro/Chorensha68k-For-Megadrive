@@ -4,7 +4,10 @@
     .globl  _start
     .long   0x00FFFE00          | initial SSP
     .long   _start              | reset PC
-    .rept   22
+    .long   _buserr             | bus error
+    .long   _addrerr            | address error
+    .long   _illegal            | illegal instruction
+    .rept   19
     .long   _exception
     .endr
     .long   _exception          | spurious
@@ -79,6 +82,23 @@ _start:
 _exception:
     rte
 
+| fatal CPU exceptions: record the cause at $FFFFF0 and stop
+_buserr:
+    move.w  #2, 0xFFFFF0
+    bra.s   _fatal_g0
+_addrerr:
+    move.w  #3, 0xFFFFF0
+_fatal_g0:
+    move.l  10(%sp), 0xFFFFF2               | faulting PC (group 0 frame)
+    move.l  2(%sp), 0xFFFFF6                | access address
+    bra.s   _halt
+_illegal:
+    move.w  #4, 0xFFFFF0
+    move.l  2(%sp), 0xFFFFF2
+_halt:
+    move.w  #0x2700, %sr
+1:  bra.s   1b
+
 _hint:
     rte
 
@@ -88,6 +108,21 @@ _vint:
     move.w  0xC00004, %d0                   | ack
     movem.l (%sp)+, %d0-%d1/%a0-%a1
     rte
+
+| 32x32 -> 32 bit multiply for gcc (no libgcc for plain 68000 is linked)
+    .globl  __mulsi3
+__mulsi3:
+    move.w  4(%sp), %d0                     | a.hi
+    mulu.w  10(%sp), %d0                    | a.hi * b.lo
+    move.w  8(%sp), %d1                     | b.hi
+    mulu.w  6(%sp), %d1                     | b.hi * a.lo
+    add.w   %d1, %d0
+    swap    %d0
+    clr.w   %d0
+    move.w  6(%sp), %d1
+    mulu.w  10(%sp), %d1                    | a.lo * b.lo
+    add.l   %d1, %d0
+    rts
 
     .globl  _rom_end_m1
     .set    _rom_end_m1, 0x000FFFFF

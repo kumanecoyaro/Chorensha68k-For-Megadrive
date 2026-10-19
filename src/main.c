@@ -63,6 +63,7 @@ int main(void)
         obj_update_all();
         bg_update();
         spr_end();
+        music_update();
         sound_update();
         make_score_line();
         frame_count++;

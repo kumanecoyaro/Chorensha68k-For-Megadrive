@@ -15,12 +15,12 @@ GEN   = $(BUILD)/gen
 OUT   = out
 ROM   = $(OUT)/chorensha68k_md.bin
 
-CFLAGS = -m68000 -O2 -fomit-frame-pointer -ffreestanding -fno-builtin -fno-pic \
+CFLAGS = -m68000 -mstrict-align -O2 -fomit-frame-pointer -ffreestanding -fno-builtin -fno-pic \
          -fno-asynchronous-unwind-tables -Wall -Wno-main -Isrc -I$(GEN)
 LDFLAGS = -m68000 -nostdlib -static -Wl,--build-id=none -T src/md.ld
 
 SRCS = src/main.c src/vdp.c src/sprite.c src/tables.c src/bg.c src/obj.c \
-       src/player.c src/enemy.c src/stage.c src/sound.c $(GEN)/assets.c $(GEN)/pcm.c $(GEN)/z80drv.c
+       src/player.c src/enemy.c src/stage.c src/sound.c src/music.c $(GEN)/assets.c $(GEN)/pcm.c $(GEN)/z80drv.c $(GEN)/bgm.c
 OBJS = $(BUILD)/crt0.o $(BUILD)/pcm_data.o $(patsubst %.c,$(BUILD)/%.o,$(notdir $(SRCS)))
 
 all: $(ROM)
@@ -39,6 +39,9 @@ $(GEN)/assets.c $(GEN)/assets.h: $(BUILD)/assets/XSP_DAT/map.bg0 tools/convert_a
 $(GEN)/pcm.c $(GEN)/pcm.h $(GEN)/pcm.bin: $(BUILD)/assets/XSP_DAT/map.bg0 tools/convert_pcm.py
 	$(PY) tools/convert_pcm.py $(BUILD)/disk/CRS68K/PCM_DAT/SZ2_PCM.CNF $(BUILD)/assets/PCM_DAT $(GEN)
 
+$(GEN)/bgm.c $(GEN)/bgm.h: $(BUILD)/assets/XSP_DAT/map.bg0 tools/convert_bgm.py tools/mdx.py
+	$(PY) tools/convert_bgm.py $(BUILD)/disk/CRS68K/BGM_DAT/SZ2_BGM.CNF $(BUILD)/disk/CRS68K/BGM_DAT/original $(GEN)
+
 $(GEN)/z80drv.c: tools/z80_pcm_driver.py
 	mkdir -p $(GEN)
 	$(PY) tools/z80_pcm_driver.py $@
@@ -51,10 +54,10 @@ $(BUILD)/crt0.o: src/crt0.s
 $(BUILD)/pcm_data.o: src/pcm_data.s $(GEN)/pcm.bin
 	$(CC) -m68000 -Wa,-I$(GEN) -c $< -o $@
 
-$(BUILD)/%.o: src/%.c src/*.h $(GEN)/assets.h $(GEN)/pcm.h
+$(BUILD)/%.o: src/%.c src/*.h $(GEN)/assets.h $(GEN)/pcm.h $(GEN)/bgm.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/%.o: $(GEN)/%.c $(GEN)/assets.h $(GEN)/pcm.h
+$(BUILD)/%.o: $(GEN)/%.c $(GEN)/assets.h $(GEN)/pcm.h $(GEN)/bgm.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/game.elf: $(OBJS) src/md.ld

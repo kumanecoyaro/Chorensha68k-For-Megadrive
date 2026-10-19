@@ -6,7 +6,7 @@ X68000 用シューティング「超連射68k」(ver1.10) のメガドライブ
 （ザコ $190 / 中型機 $1F0）と敵弾 3 種** を動かせます。
 
 * 解析メモ: [docs/ANALYSIS.md](docs/ANALYSIS.md)
-* ビルド済み ROM: `out/chorensha68k_md.bin`（768 KB）
+* ビルド済み ROM: `out/chorensha68k_md.bin`（896 KB）
 
 ## ROM 構成
 
@@ -16,9 +16,13 @@ X68000 版は起動時に `assets.tgz` を展開し、ADPCM を MCDRV のバッ�
 * 効果音: SZ2_PCM.CNF の全 62 番（35 サンプル）を MSM6258 ADPCM → 8bit 符号なし PCM
   (15.625 kHz, YM2612 DAC にそのまま書ける形式) に変換。10.4 kHz 指定の番号は伸長済み。
   Z80 ドライバが ROM をバンク切替しながら DAC へ流す（`tools/z80_pcm_driver.py`）。
+* BGM: 13 曲の MDX（YM2151 用、8ch）をそのまま格納し、68000 上の MDX ドライバ（`src/music.c`）が
+  YM2612 と DCSG で演奏する。音色は両チップ共通のパラメータ（ALG/FB/DT1/MUL/TL/KS/AR/AM/D1R/D2R/D1L/RR）
+  だけを使い、DT2・ハードウェア LFO などは無視。FM が 2 音足りない分は曲ごとに 2ch を DCSG の矩形波へ
+  （ノイズを使うチャンネルは DCSG ノイズへ）割り当てる。FM6 は効果音再生中だけ DAC に切り替わる。
 * グラフィック / マップ: MD のタイル・ネームテーブル・スプライト形式に変換済み。
 * `make` の最後に `tools/rom_budget.py` が現在のサイズと、全素材を載せた場合の見積もりを表示する。
-  見積もり合計は約 1.8 MB で 4 MB 以内に収まる（下表）。
+  見積もり合計は約 1.7 MB で 4 MB 以内に収まる（下表）。
 
 | 項目 | サイズ |
 |---|---|
@@ -27,10 +31,10 @@ X68000 版は起動時に `assets.tgz` を展開し、ADPCM を MCDRV のバッ�
 | スプライト構成表（.ref/.frm 全数） | 134 KB |
 | BG タイル + チップ表（map / end） | 69 KB |
 | BG マップ | 16 KB |
-| BGM（MDX を YM2612 用に変換、3 倍で見積もり） | 206 KB |
+| BGM（MDX 13 曲 + 音色、実測） | 72 KB |
 | ゲームコード（SZ2.X の text 相当） | 240 KB |
 | データ表 | 88 KB |
-| **合計** | **約 1854 KB（4 MB の 45%）** |
+| **合計** | **約 1719 KB（4 MB の 42%）** |
 
 ## 操作
 
@@ -61,12 +65,13 @@ make XDF=path/to/CH68_110_1.xdf
 | `tools/x68gfx.py` | PCG・パレット・チップ・マップの読み込み |
 | `tools/convert_assets.py` | MD 用データ (C ソース) 生成 |
 | `tools/convert_pcm.py` | ADPCM → MD DAC 用 PCM 変換 |
-| `tools/z80_pcm_driver.py` | Z80 PCM ドライバ生成 |
+| `tools/z80_pcm_driver.py` | Z80 ドライバ生成（DAC 再生 + YM2612 書き込みキュー） |
+| `tools/mdx.py`, `tools/convert_bgm.py` | MDX 解析 / 音色・DCSG 割り当て・音程表の生成 |
 | `tools/rom_budget.py` | ROM サイズ集計と全素材搭載時の見積もり |
 | `tools/fixrom.py` | ROM ヘッダとチェックサムの設定 |
 | `tools/mdrun.py` | libretro コア（Genesis Plus GX）でのヘッドレス実行・スクリーンショット |
 
 ## 未対応
 
-BGM、ボム、パワーアップアイテム、自機の残機/ゲームオーバー、ステージ1 の型 $208 以降の敵、
+ボム、パワーアップアイテム、自機の残機/ゲームオーバー、ステージ1 の型 $208 以降の敵、
 ステージ2以降、タイトル等。
