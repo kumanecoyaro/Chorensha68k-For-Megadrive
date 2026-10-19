@@ -26,7 +26,7 @@ extern const u16 z80_driver_size;
 
 #ifdef Z80_PEEK
 u8 z80_peek[64][4];
-u16 qmax_after, qmax_frame, qdrop;
+u16 qmax_after, qmax_frame, qdrop, ring_back_max, ring_back_sfx;
 #endif
 static u8 req_no;
 static u16 play_pr, play_frames;
@@ -67,6 +67,14 @@ static u16 ym_flush(void)
     z80_get_bus();
     rd = Z80_RAM[RING_RD];
     wr = Z80_RAM[RING_WR];
+#ifdef Z80_PEEK
+    {   /* ring entries the Z80 has not written yet when the next frame's batch arrives */
+        extern u16 ring_back_max, ring_back_sfx;
+        u8 back = (u8)(wr - rd);
+        if (back > ring_back_max) ring_back_max = back;
+        if (play_frames && back > ring_back_sfx) ring_back_sfx = back;
+    }
+#endif
     room = (u8)(rd - wr - 1);
     n = qlen;
     if (n > room)
@@ -205,7 +213,7 @@ void sound_update(void)
     ym_flush();
 #ifdef Z80_PEEK
     {
-        extern u16 qmax_after, qmax_frame, qdrop;
+        extern u16 qmax_after, qmax_frame, qdrop, ring_back_max, ring_back_sfx;
         if (qlen > qmax_after) { qmax_after = qlen; qmax_frame = frame_count; }
     }
 #endif

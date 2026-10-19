@@ -42,7 +42,10 @@ def track_stats(mdx):
     return notes, noise
 
 def choose_dropped(mdx):
-    """Pick the two MDX channels that are not played on the YM2612."""
+    """Pick the two MDX channels that are not played on the YM2612.
+    Returns (dropped, fm6): fm6 is the kept channel that goes on FM6, which
+    the DAC takes over while a sound effect plays - the one with the smallest
+    pitch range (drums / bass pedal), so the melody is never cut by shots."""
     notes, noise = track_stats(mdx)
     score = []
     for i, ns in enumerate(notes):
@@ -55,7 +58,11 @@ def choose_dropped(mdx):
             s += 500                                # echo of an earlier channel
         score.append((s, i))
     score.sort(reverse=True)
-    return sorted(i for _, i in score[:2])
+    drop = sorted(i for _, i in score[:2])
+    kept = [i for i in range(8) if i not in drop]
+    rng = lambda i: (max(notes[i]) - min(notes[i]) if notes[i] else -1, len(notes[i]), -i)
+    fm6 = min(kept, key=rng)
+    return drop, fm6
 
 def voice_bytes(v):
     """28 bytes: no, FB/ALG, slot mask, carrier mask, then 4 x (DT1/MUL, TL, KS/AR, AM/D1R, D2R, D1L/RR)."""
@@ -91,7 +98,7 @@ def main(cnf, bgmdir, out):
         if name in songs:
             continue
         mdx = MDX(open(os.path.join(bgmdir, name + '.MDX'), 'rb').read())
-        drop = choose_dropped(mdx)
+        drop, fm6 = choose_dropped(mdx)
         vb = []
         for vno in sorted(mdx.voices):
             vb += voice_bytes(mdx.voices[vno])
@@ -103,6 +110,8 @@ def main(cnf, bgmdir, out):
         for i in range(8):
             if i in drop:
                 kinds.append(0xFF)
+            elif i == fm6:
+                kinds.append(5)
             else:
                 kinds.append(fm); fm += 1
         trk = ', '.join(f'body_{name} + {mdx.tracks[i]}' for i in range(8))
@@ -110,7 +119,7 @@ def main(cnf, bgmdir, out):
                  f'{{ {", ".join(str(k) for k in kinds)} }} }};')
         size = len(body) + len(vb) + 48
         songs[name] = size; total += size
-        print(f'{name:8s} muted ch {"".join("ABCDEFGH"[i] for i in drop)}   {size} bytes  {mdx.title.strip()}')
+        print(f'{name:8s} muted ch {"".join("ABCDEFGH"[i] for i in drop)}  FM6 {"ABCDEFGH"[fm6]}  {size} bytes  {mdx.title.strip()}')
     c.append('const Song *const bgm_table[256] = {')
     for no, mdc in ents:
         c.append(f'  [0x{no:02X}] = &song_{mdc[:-4]},')
