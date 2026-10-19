@@ -2,17 +2,29 @@ OUTPUT_FORMAT("elf32-m68k")
 OUTPUT_ARCH(m68k)
 ENTRY(_start)
 
+/* RAM $FF0000-$FF9FFF holds the original game's variables (tools/relocate.py,
+ * ORIG_RAM / ORIG_RAM_SIZE); the port's own data starts at $FFA000. */
 MEMORY
 {
     rom (rx)  : ORIGIN = 0x000000, LENGTH = 4M
-    ram (rwx) : ORIGIN = 0xFF0000, LENGTH = 64K
+    ram (rwx) : ORIGIN = 0xFFA000, LENGTH = 0x5E00
 }
 
 SECTIONS
 {
-    .text : {
+    /* vectors $000, header $100, hook table $200 (HOOK_BASE) */
+    .boot 0 : {
         KEEP(*(.vectors))
         KEEP(*(.header))
+        KEEP(*(.hooks))
+    } > rom
+
+    /* the relocated SZ2.X image (ORIG_ROM) */
+    .orig 0x10000 : {
+        KEEP(*(.orig))
+    } > rom
+
+    .text : {
         *(.text .text.*)
         *(.rodata .rodata.*)
         . = ALIGN(2);
@@ -35,6 +47,8 @@ SECTIONS
     } > ram
 
     _rom_end = _etext + (_edata - _sdata);
+
+    ASSERT(SIZEOF(.boot) <= 0x10000, "boot section overlaps ORIG_ROM")
 
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame) }
 }

@@ -6,7 +6,7 @@ usage: convert_assets.py SZ2.X XSP_DAT_DIR OUT_DIR
 Produces OUT_DIR/assets.c and OUT_DIR/assets.h containing:
   * 4 MD palettes (CRAM words)
   * BG tiles, chip table (32x32 px chips as 4x4 MD name-table words), maps bg0/bg1
-  * sprite frames (lists of MD hardware sprite pieces) + sprite tiles
+  * (sprites: tools/convert_sprites.py)
   * tables lifted from SZ2.X: trig table (speed 0..15 x 256 angles), atan table,
     random table, shot power table
 """
@@ -54,8 +54,8 @@ class PalGroup:
         self.colors = None
     def add(self, rgb, w=1):
         self.count[md_rgb(rgb)] += w
-    def build(self):
-        self.colors = quantize(self.count)
+    def build(self, n=15):
+        self.colors = quantize(self.count, n)
         self.cache = {}
     def index(self, rgb):
         c = md_rgb(rgb)
@@ -211,40 +211,11 @@ def main(xpath, xsp_dir, out_dir):
             for v in cpix[ch]:
                 if v:
                     g.add(bgpal[v], n)
-    g_far.build(); g_near.build()
+    g_far.build(12); g_near.build()     # far palette: colours 13-15 are the text colours
 
-    src = SpriteSrc(xsp_dir)
-    # sprite frame list: (symbol, kind, args, x68 palette number, md palette group)
+    # sprite palettes 2 / 3 come from tools/convert_sprites.py
     g_a, g_b = PalGroup('sprA'), PalGroup('sprB')
-    frames = []
-    for i in range(6):
-        frames.append(('PLAYER', ('ref', 'player', i), 9, g_a))
-    for i in range(16):
-        frames.append(('ZAKO', ('ref', 'zako', i), 7, g_b))
-    frames.append(('SHIP', ('ref', 'obj200', 0), 9, g_a))
-    for i in range(32):
-        frames.append(('BIGBUL', ('ref', 'bullet32', i), 1, g_b))
-    for i in range(0, 42, 3):
-        frames.append(('EXPL', ('ref', 'expl4', 168 + i), 2, g_a))
-    for i in range(6):
-        frames.append(('EXPLS', ('ref', 'expl3', i), 2, g_a))
-    for i in range(8):
-        frames.append(('BUL', ('pcg', 'sz2_main.sp', 0x20 + i), 12, g_b))
-    for i in range(2):
-        frames.append(('BULS', ('pcg', 'sz2_main.sp', 0x10 + i), 12, g_b))
-    frames.append(('SHOTC', ('pcg', 'rot32.sp', 0x48), 5, g_a))
-    for i in range(2):
-        frames.append(('SHOTS', ('pcg', 'rot32.sp', 0x48 + i), 2, g_a))
-    for i in range(2):
-        frames.append(('MUZZLE', ('pcg', 'sz2_main.sp', 0x12 + i), 2, g_a))
-
-    fpix = []
-    for sym, (kind, f, i), p, g in frames:
-        pix = src.ref_pixels(f, i) if kind == 'ref' else src.pcg_pixels(f, i)
-        fpix.append(pix)
-        for v in pix.values():
-            g.add(sppal[p * 16 + v])
-    g_a.build(); g_b.build()
+    g_a.colors = g_b.colors = []
     groups = [g_far, g_near, g_a, g_b]
 
     # ---- BG tiles + chips (MD palette 0 = far layer, 1 = near layer)
@@ -264,20 +235,8 @@ def main(xpath, xsp_dir, out_dir):
     chip_far = {ch: chip_words(ch, g_far, 0) for ch in sorted(used1)}
     nbg = 1 + len(bgtiles.tiles)
 
-    # ---- sprites
-    stiles = SpriteTiles(base=nbg)
-    frame_pieces = []
-    for (sym, spec, p, g), pix in zip(frames, fpix):
-        frame_pieces.append(split_sprite(pix, g, sppal[p * 16:p * 16 + 16], groups.index(g), stiles))
-    nspr = len(stiles.data) // 32
-    print(f'BG tiles {nbg}, sprite tiles {nspr}, total {nbg + nspr}')
-    assert nbg + nspr <= 1536, 'VRAM tile budget exceeded'
-
-    # ---- 8x8 font for score / messages (own glyphs; SZ_TEXT.pcg is not used)
-    white = g_a.index((255, 255, 255))
-    font_tiles = b''.join(tile_bytes([white if c else 0 for c in g]) for g in font_glyphs())
-    font_base = 0xF000 // 32           # VRAM 0xF000-0xFFFF is free in our layout
-    assert len(font_tiles) // 32 <= 128
+    print(f'BG tiles {nbg}')
+    font_base = 0xF000 // 32           # VRAM 0xF000-0xFFFF: text font (convert_sprites.py)
 
     # ---- tables from SZ2.X
     trig = struct.unpack_from('>16384h', img, 0x3e3bc)         # [32 speeds][256 angles][dx,dy]
@@ -300,8 +259,6 @@ def main(xpath, xsp_dir, out_dir):
     out.append(arr('u16', 'pal_data', sum((g.cram() for g in groups), []), fmt='0x{:03x}'))
     alltiles = b''.join(bgtiles.tiles)
     out.append(arr('u32', 'bg_tiles', list(struct.unpack(f'>{len(alltiles)//4}I', alltiles)), 8, '0x{:08x}'))
-    out.append(arr('u32', 'spr_tiles', list(struct.unpack(f'>{len(stiles.data)//4}I', bytes(stiles.data))), 8, '0x{:08x}'))
-    out.append(arr('u32', 'font_tiles', list(struct.unpack(f'>{len(font_tiles)//4}I', font_tiles)), 8, '0x{:08x}'))
     # chips: index by original chip number (256 entries x 16 words), unused -> 0
     cw = []
     for ch in range(256):
@@ -313,19 +270,6 @@ def main(xpath, xsp_dir, out_dir):
     out.append(arr('u16', 'chip_far', cw, fmt='0x{:04x}'))
     out.append(arr('u8', 'map_bg0', list(m0), 8))
     out.append(arr('u8', 'map_bg1', list(m1), 8))
-    # sprite frames
-    pieces = []; fidx = []; syms = collections.OrderedDict()
-    for (sym, *_), pc in zip(frames, frame_pieces):
-        syms.setdefault(sym, len(fidx))
-        fidx.append(len(pieces))
-        for dx, dy, w, h, t, pal in pc:
-            pieces.append((dx, dy, ((w - 1) << 2) | (h - 1), (pal << 13) | t))
-    fidx.append(len(pieces))
-    out.append(arr('u16', 'frame_start', fidx))
-    out.append('const SprPiece frame_pieces[%d] = {' % len(pieces))
-    for dx, dy, sz, attr in pieces:
-        out.append(f'  {{{dy}, {sz}, 0x{attr:04x}, {dx}}},')
-    out.append('};')
     out.append(arr('s16', 'trig_tab', list(trig), 16))
     out.append(arr('u8', 'atan_tab', list(atan), 16))
     out.append(arr('u16', 'rand_tab', list(rnd), 16, '0x{:04x}'))
@@ -336,30 +280,17 @@ def main(xpath, xsp_dir, out_dir):
 
     h = ['/* generated by tools/convert_assets.py - do not edit */',
          '#ifndef ASSETS_H', '#define ASSETS_H', '#include "types.h"', '',
-         'typedef struct { s8 dy; u8 size; u16 attr; s16 dx; } SprPiece;', '',
-         f'#define BG_TILE_COUNT {nbg}', f'#define SPR_TILE_BASE {nbg}', f'#define SPR_TILE_COUNT {nspr}',
-         f'#define FONT_TILE_BASE {font_base}', f'#define FONT_TILE_COUNT {len(font_tiles)//32}',
-         f'#define FONT_CHARS "{FONT_CHARS}"', '']
-    for sym, start in syms.items():
-        h.append(f'#define FR_{sym} {start}')
-    h.append(f'#define FRAME_COUNT {len(frames)}')
-    for t, (upd, ini, score, hp) in classes.items():
-        h.append(f'#define SCORE_{t:03X} {score}')
-        h.append(f'#define HP_{t:03X} {hp}')
+         f'#define BG_TILE_COUNT {nbg}', f'#define FONT_TILE_BASE {font_base}', '']
     h += ['', 'extern const u16 pal_data[64];',
           f'extern const u32 bg_tiles[{len(alltiles)//4}];',
-          f'extern const u32 spr_tiles[{len(stiles.data)//4}];',
-          f'extern const u32 font_tiles[{len(font_tiles)//4}];',
           'extern const u16 chip_near[4096];', 'extern const u16 chip_far[4096];',
           'extern const u8 map_bg0[8192];', 'extern const u8 map_bg1[8192];',
-          f'extern const u16 frame_start[{len(fidx)}];',
-          f'extern const SprPiece frame_pieces[{len(pieces)}];',
           'extern const s16 trig_tab[16384];', 'extern const u8 atan_tab[257];',
           'extern const u16 rand_tab[1024];', 'extern const s16 shotdir_tab[512];',
           'extern const s16 power_tab[30];', 'extern const u8 dir_angle_tab[10];',
           '#endif']
     open(os.path.join(out_dir, 'assets.h'), 'w').write('\n'.join(h) + '\n')
-    for g in groups:
+    for g in groups[:2]:
         print(g.name, len(g.count), 'colors ->', len(g.colors))
 
 if __name__ == '__main__':

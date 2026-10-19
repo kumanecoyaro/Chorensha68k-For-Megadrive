@@ -109,3 +109,19 @@ u16 pad_read(void)
     *data = 0x40;
     return (u16)(~((hi & 0x3F) | ((lo & 0x30) << 2)) & 0xFF);
 }
+
+/* 68000 -> VRAM DMA (src in RAM, even, within one 128 KB block) */
+void vdp_dma_vram(u16 vram, const void *src, u16 words)
+{
+    u32 a = (u32)src >> 1;
+    volatile u16 lo;
+    vdp_set_reg(19, words & 0xFF);
+    vdp_set_reg(20, words >> 8);
+    vdp_set_reg(21, a & 0xFF);
+    vdp_set_reg(22, (a >> 8) & 0xFF);
+    vdp_set_reg(23, (a >> 16) & 0x7F);
+    /* the command's second word is written from RAM (DMA trigger quirk) */
+    lo = (u16)(((vram >> 14) & 3) | 0x80);
+    VDP_CTRL = 0x4000 | (vram & 0x3FFF);
+    VDP_CTRL = lo;
+}

@@ -39,5 +39,6 @@ void vdp_set_palettes(const u16 *pal, u16 n);
 void vdp_vscroll(u16 a, u16 b);
 void vdp_wait_vblank(void);
 u16 pad_read(void);
+void vdp_dma_vram(u16 vram, const void *src, u16 words);
 
 #endif

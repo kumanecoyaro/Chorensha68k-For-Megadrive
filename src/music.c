@@ -56,6 +56,9 @@ typedef struct {
     Lfo mp, ma;
     u8 mp_act, ma_act;
     u8 used_noise;
+    u16 lastfreq;       /* block/F-number last written (skip identical writes) */
+    s16 lastatt;        /* attenuation + volume LFO last written to the carriers' TL */
+    const u8 *lastvoice;
     u8 center;          /* always panned centre: its doubling channel is muted */
 } MCh;
 
@@ -84,9 +87,12 @@ static u16 key_log_base;
 void ym_write(u8 part, u8 reg, u8 val);
 void psg_write(u8 v);
 
+static const u8 ch_part[6] = { 0, 0, 0, 1, 1, 1 };
+static const u8 ch_off[6] = { 0, 1, 2, 0, 1, 2 };
+
 static void fm_reg(u8 c, u8 reg, u8 val)
 {
-    ym_write(c >= 3, reg + (c % 3), val);
+    ym_write(ch_part[c], reg + ch_off[c], val);
 }
 
 static const u8 *find_voice(u8 no)
@@ -111,6 +117,10 @@ static void fm_tl(MCh *c, s16 lfo)
     u8 i;
     if (!v || c->kind == MUTED)
         return;
+    if (a == c->lastatt && v == c->lastvoice)
+        return;                         /* registers already hold these levels */
+    c->lastatt = a;
+    c->lastvoice = v;
     for (i = 0; i < 4; i++) {
         s16 tl = v[8 + i];
         if (v[3] & (1 << i)) {
@@ -160,6 +170,11 @@ static void psg_vol(MCh *c, u8 on)
     }
 }
 
+static const u8 div3[36] = {
+    0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5,
+    6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 9, 10, 10, 10, 11, 11, 11
+};
+
 static void set_pitch(MCh *c)
 {
     s32 p = (s32)(c->note + 15) * 64 + c->detune + shr8(&c->pacc);
@@ -170,13 +185,18 @@ static void set_pitch(MCh *c)
         p += shr8(&c->mp.val);
     if (p < 0)
         p = 0;
-    oct = (u16)p / 768;
-    rem = (u16)p % 768;
+    if (p >= 36 * 256)
+        p = 36 * 256 - 1;
+    oct = div3[(u16)p >> 8];            /* p / 768 without a division */
+    rem = (u16)p - oct * 768;
     if (c->kind < 0x10) {
         u16 fn = fnum_tab[rem];
         s16 blk = oct - 1;
         if (blk < 0) { fn >>= 1; blk = 0; }
         if (blk > 7) blk = 7;
+        if (((blk << 11) | fn) == c->lastfreq)
+            return;
+        c->lastfreq = (blk << 11) | fn;
         fm_reg(c->kind, 0xA4, (blk << 3) | (fn >> 8));
         fm_reg(c->kind, 0xA0, fn & 0xFF);
     } else if (!c->noise) {
@@ -552,6 +572,8 @@ void music_play(u8 no)
         c->note = -1;
         c->pan = 3;
         c->center = (song->center >> i) & 1;
+        c->lastfreq = 0xFFFF;
+        c->lastatt = -1000;
         if (c->kind < 0x10)
             fm_reg(c->kind, 0xB4, 0xC0);
     }
@@ -572,6 +594,9 @@ void music_update(void)
     last_vbl += n;
     if (!playing)
         return;
+#ifdef FRAME_PROBE
+    { extern u16 mprobe[64][2]; extern u16 frame_count; mprobe[frame_count & 63][0] = n; mprobe[frame_count & 63][1] = tempo; }
+#endif
     while (n--) {
         tick_acc += tempo_tab[tempo];
         while (tick_acc >= 0x10000) {
@@ -580,3 +605,6 @@ void music_update(void)
         }
     }
 }
+#ifdef FRAME_PROBE
+u16 mprobe[64][2];
+#endif

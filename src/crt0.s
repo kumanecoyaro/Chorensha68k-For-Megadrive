@@ -75,6 +75,17 @@ _start:
 3:  move.w  (%a0)+, (%a1)+
     dbra    %d0, 3b
 4:
+    | original game RAM (data variables / routines moved to RAM by tools/relocate.py)
+    lea     orig_ram_init, %a0
+    lea     0xFF0000, %a1
+    move.l  #orig_ram_init_end, %d0
+    sub.l   #orig_ram_init, %d0
+    lsr.l   #1, %d0
+    beq.s   6f
+    subq.l  #1, %d0
+7:  move.w  (%a0)+, (%a1)+
+    dbra    %d0, 7b
+6:
     lea     0x00FFFE00, %sp
     jsr     main
 5:  bra.s   5b
@@ -105,7 +116,9 @@ _hint:
 _vint:
     movem.l %d0-%d1/%a0-%a1, -(%sp)
     addq.w  #1, vblank_count
+    addq.w  #1, ORIG_VBLCNT                 | B_4a0cc: the original's vsync counter
     move.w  0xC00004, %d0                   | ack
+    jsr     vblank_work                     | src/main.c (gcc saves d2-d7/a2-a6 itself)
     movem.l (%sp)+, %d0-%d1/%a0-%a1
     rte
 
