@@ -23,6 +23,20 @@ h_alloc_none:
     suba.l  %a0, %a0
     rts
 
+| ---- explosion sequence (class $10f, a3 = object, d0 -> class table entry):
+| spawn only while the remaining count ($50, decremented after each spawn) is
+| odd, so a sequence makes half as many explosions; those always get their
+| object (no second halving by h_alloc_fx)
+    .globl  h_seq_spawn
+h_seq_spawn:
+    btst    #0, 0x51(%a3)
+    beq.s   1f
+    movea.l %d0, %a1
+    movea.l (%a1), %a0
+    clr.w   fx_alloc_toggle
+    jmp     (%a0)
+1:  rts
+
     .bss
 fx_alloc_toggle: .word 0
     .text

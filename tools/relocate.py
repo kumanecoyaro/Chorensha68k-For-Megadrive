@@ -203,7 +203,7 @@ def main(xpath, lst, xspdir, out):
         img[addr:addr + len(nb)] = nb
 
     # ---- hooks
-    names = ['h_alloc_fx', 'h_alloc_none']
+    names = ['h_alloc_fx', 'h_alloc_none', 'h_seq_spawn']
     hs = sorted(h[0] for h in HOOKS)
     for a, b in zip(hs, hs[1:]):
         assert b - a >= 6, f'hook patches overlap at ${a:x} / ${b:x}'
@@ -223,6 +223,13 @@ def main(xpath, lst, xspdir, out):
                 break
         else:
             raise SystemExit(f'no jsr fn_040b6 in ${f:x}')
+
+    # explosion sequences (class $10f: a row / ring of explosions spawned one
+    # by one, e.g. when a large enemy is destroyed): the spawn call
+    # (movea.l d0,a1 / movea.l (a1),a0 / jsr (a0)) -> jsr h_seq_spawn, which
+    # spawns only every other one
+    assert img[0x10884:0x1088a] == bytes.fromhex('224020514e90')
+    struct.pack_into('>HI', img, 0x10884, 0x4EB9, HOOK_BASE + 6 * names.index('h_seq_spawn'))
 
     # ---- RAM initial image (data vars / routines copied to RAM)
     rimg = bytearray(ram_size)
