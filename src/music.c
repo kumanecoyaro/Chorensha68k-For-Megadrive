@@ -36,7 +36,8 @@ typedef struct {
     u8 q;
     s16 detune;         /* 1/64 semitone */
     s16 porta;          /* 1/256 of detune unit per tick */
-    u8 legato;
+    u8 legato;          /* $F7 seen: the next note is not keyed off at its end */
+    u8 tie;             /* previous note was tied: this note only changes pitch */
     u8 kdelay;
     u8 mp_w, ma_w, mp_on, ma_on;
     u16 mp_p, ma_p;
@@ -287,35 +288,43 @@ static void step(MCh *c)
         }
         if (cmd <= 0xDF) {                          /* note */
             u16 len = *c->pos++ + 1, gate;
-            u8 leg = c->legato;
-            if (c->q <= 8) {
+            u8 tied = c->tie && c->on;
+            /* gate: q1-7 = len*q/8; q8 = until the next note (MXDRV keys off
+             * right before the next key-on); @q (>8) = len - (256-q) ticks;
+             * a note after $F7 is never keyed off by the gate */
+            if (c->legato || c->q == 8) {
+                gate = 0;
+            } else if (c->q < 8) {
                 gate = (u16)(len * c->q) >> 3;
+                if (!gate)
+                    gate = 1;
             } else {
                 s16 g = len - (256 - c->q);
                 gate = g < 1 ? 1 : g;
             }
-            if (!gate)
-                gate = 1;
-            if (leg)
-                gate = len;
+            c->tie = c->legato;
             c->legato = 0;
-            if (!(leg && c->on))
+            if (!tied)
                 key_off(c);
             c->note = cmd - 0x80;
-            c->pacc = 0;
-            c->mp_act = c->mp_on;
-            if (c->mp_act)
-                lfo_reset(&c->mp, c->mp_w, c->mp_p, c->mp_a);
-            c->ma_act = c->ma_on;
-            if (c->ma_act)
-                lfo_reset(&c->ma, c->ma_w, c->ma_p, c->ma_a);
+            if (!tied) {
+                c->pacc = 0;
+                c->mp_act = c->mp_on;
+                if (c->mp_act)
+                    lfo_reset(&c->mp, c->mp_w, c->mp_p, c->mp_a);
+                c->ma_act = c->ma_on;
+                if (c->ma_act)
+                    lfo_reset(&c->ma, c->ma_w, c->ma_p, c->ma_a);
+            }
             set_pitch(c);
-            if (c->kind < 0x10)
+            if (c->kind < 0x10 && !tied)
                 fm_tl(c, 0);
             c->gate = gate;
-            c->delay = c->kdelay;
-            if (!(leg && c->on) && c->delay == 0)
-                key_on(c);
+            if (!tied) {
+                c->delay = c->kdelay;
+                if (c->delay == 0)
+                    key_on(c);
+            }
             c->wait = len - 1;
             return;
         }
@@ -458,7 +467,7 @@ static void tick(void)
         if (c->note < 0)
             continue;
         if (c->delay) {
-            if (--c->delay == 0 && c->gate)
+            if (--c->delay == 0)
                 key_on(c);
         }
         if (c->on || c->delay) {

@@ -56,8 +56,11 @@ void stage_update(void)
     switch (state) {
     case 0x100:
 #ifndef NO_MUSIC
+#ifndef MUSIC_TEST
+#define MUSIC_TEST 0x11
+#endif
         if (timer == 0)
-            music_play(0x11);           /* fn_03590($11): stage 1 BGM */
+            music_play(MUSIC_TEST);     /* fn_03590($11): stage 1 BGM */
 #endif
         if (timer >= 0x30 && timer < 0xC0)
             spr_text(LAYER_TOP, 100, 108, "STAGE 1");

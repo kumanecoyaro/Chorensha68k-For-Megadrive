@@ -54,7 +54,8 @@ class Track:
         self.q = 8
         self.detune = 0
         self.porta = 0
-        self.legato = False
+        self.legato = False          # $F7: the next note is not keyed off at its end
+        self.tie = False             # previous note was tied
         self.keyon_delay = 0
         self.mp = None; self.ma = None
         self.mp_on = False; self.ma_on = False
@@ -95,11 +96,15 @@ class Track:
                 return ev
             if c <= 0xDF:                                   # note
                 ln = self.u8() + 1
-                if self.q <= 8:
+                if self.legato or self.q == 8:
+                    gate = 0                                 # no gate key-off
+                elif self.q < 8:
                     gate = max(1, ln * self.q // 8)
                 else:
                     gate = max(1, ln - (256 - self.q))
-                ev.append(('note', c - 0x80, ln, ln if self.legato else gate, self.legato))
+                # e[4]: this note is tied to the previous one (no key-on)
+                ev.append(('note', c - 0x80, ln, gate, self.tie))
+                self.tie = self.legato
                 self.legato = False
                 self.wait = ln - 1
                 return ev

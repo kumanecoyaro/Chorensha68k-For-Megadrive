@@ -33,7 +33,7 @@ static u16 play_pr, play_frames;
 #define QMAX 600
 static u8 queue[QMAX];          /* pending 3-byte writes: part offset, reg, value */
 static u16 qlen;
-static u8 ym_shadow[2][256];
+static u16 ym_shadow[2][256];  /* last value written, $100 = unknown */
 static u8 dac_on;
 static u8 music_pan6 = 0xC0;   /* FM6 pan wanted by the music ($B6, shared with the DAC) */
 
@@ -109,7 +109,7 @@ void sound_init(void)
     Z80_RESET = 0x100;
     z80_release_bus();
     for (i = 0; i < 256; i++)
-        ym_shadow[0][i] = ym_shadow[1][i] = 0xFF;
+        ym_shadow[0][i] = ym_shadow[1][i] = 0x100;
     qlen = 0;
     dac_on = 0;
     req_no = 0;
