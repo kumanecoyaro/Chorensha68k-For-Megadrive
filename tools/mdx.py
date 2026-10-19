@@ -143,7 +143,7 @@ class Track:
                 off = self.s16()
                 if self.stack and self.stack[-1][0] == 1:
                     self.stack.pop()
-                    self.pos += off
+                    self.pos += off + 2       # target is the $F5 operand; continue after it
             elif c == 0xF3: self.detune = self.s16(); ev.append(('pitch',))
             elif c == 0xF2: self.porta = self.s16()
             elif c == 0xF1:

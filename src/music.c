@@ -8,7 +8,7 @@
  * direct register writes other than the noise switch) are ignored.
  *
  * Ticks follow the MDX Timer-B tempo; music_update() runs once per frame and
- * executes as many ticks as have elapsed (tempo_tab, 8.8 fixed point).
+ * executes as many ticks as have elapsed (tempo_tab, 16.16 fixed point).
  */
 #include "game.h"
 #include "bgm.h"
@@ -72,9 +72,12 @@ static const u8 key_code[6] = { 0, 1, 2, 4, 5, 6 };
 static const Song *song;
 static MCh ch[NCH];
 static u8 tempo;
-static u16 tick_acc;
+static u32 tick_acc;     /* 16.16 ticks */
 static u8 playing;
 static u16 last_vbl;
+#ifdef KEY_LOG
+static u16 key_log_base;
+#endif
 
 void ym_write(u8 part, u8 reg, u8 val);
 void psg_write(u8 v);
@@ -186,9 +189,22 @@ static void set_pitch(MCh *c)
     }
 }
 
+#ifdef KEY_LOG
+u16 key_log_n;
+u8 key_log[6000][4];        /* frame (BE), kind, note */
+#endif
+
 static void key_on(MCh *c)
 {
     c->on = 1;
+#ifdef KEY_LOG
+    if (key_log_n < 6000 && c->kind != MUTED) {
+        u16 f = vblank_count - key_log_base;
+        key_log[key_log_n][0] = f >> 8; key_log[key_log_n][1] = (u8)f;
+        key_log[key_log_n][2] = c->kind; key_log[key_log_n][3] = (u8)c->note;
+        key_log_n++;
+    }
+#endif
     if (c->kind == MUTED)
         return;
 #ifdef MUSIC_SOLO               /* debug: only one MDX channel audible */
@@ -387,12 +403,12 @@ static void step(MCh *c)
                     c->sp--;
             }
             break;
-        case 0xF4: {
+        case 0xF4: {                                /* repeat escape on the last pass */
             s16 off = rd16(c->pos);
             c->pos += 2;
             if (c->sp && c->stk[c->sp - 1].cnt == 1) {
                 c->sp--;
-                c->pos += off;
+                c->pos += off + 2;                  /* target = operand of the $F5: skip it */
             }
             break;
         }
@@ -533,6 +549,9 @@ void music_play(u8 no)
     tempo = 200;
     tick_acc = 0;
     last_vbl = vblank_count;
+#ifdef KEY_LOG
+    key_log_base = vblank_count;
+#endif
     playing = 1;
 }
 
@@ -546,8 +565,8 @@ void music_update(void)
         return;
     while (n--) {
         tick_acc += tempo_tab[tempo];
-        while (tick_acc >= 256) {
-            tick_acc -= 256;
+        while (tick_acc >= 0x10000) {
+            tick_acc -= 0x10000;
             tick();
         }
     }
