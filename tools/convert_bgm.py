@@ -9,10 +9,12 @@ script only does the chip dependent part:
   * voices keep the parameters both chips share: ALG, FB, DT1, MUL, TL, KS, AR,
     AM enable, D1R, D2R, D1L, RR (DT2 is dropped; the YM2151 hardware LFO, $FE
     direct register writes and noise frequency details are ignored by the driver)
-  * the YM2612 has 6 FM channels, so per song two MDX channels are muted.
-    Channels using the YM2151 noise generator (the YM2612 has none), echo
-    (delayed duplicate) channels and high, thin parts are chosen first.
-    (The driver can also send them to the DCSG: kind $10/$11.)
+  * the YM2612 has 6 FM channels, so per song two MDX channels are muted:
+    channels that layer another one (unison / octave doubling, echo copies),
+    else chord voices that mostly double the other parts (see choose_dropped).
+    The kept partner of a stereo-spread pair is panned centre.  YM2151 noise
+    notes are played as rests.  (The driver can also send channels to the
+    DCSG: kind $10/$11.)
   * pitch tables: F-number for the YM2612 (7.67 MHz) and DCSG periods (3.58 MHz)
     in 1/64 semitone steps; Timer-B tempo -> ticks per frame.
 """
@@ -25,44 +27,89 @@ YM_CLOCK = 53693175 / 7
 PSG_CLOCK = 53693175 / 15
 
 def track_stats(mdx):
+    """Per channel: [(tick, note, pan)] of keyed notes, noise note count, pans used."""
     trs = [Track(mdx, i) for i in range(min(8, len(mdx.tracks)))]
-    notes = [[] for _ in trs]; noise = [0] * len(trs)
-    tempo = [200]
+    notes = [[] for _ in trs]; noise = [0] * len(trs); pans = [{3} for _ in trs]
     for t in range(40000):
         for i, tr in enumerate(trs):
-            for e in tr.step(t, lambda v: tempo.__setitem__(0, v)):
-                if e[0] == 'note':
-                    notes[i].append(e[1])
-                    if tr.noise is not None and tr.noise & 0x80:
+            for e in tr.step(t, lambda v: None):
+                if e[0] == 'note' and not e[4]:
+                    notes[i].append((t, e[1], tr.pan))
+                    if trs[7].noise is not None and trs[7].noise & 0x80 and i == 7:
                         noise[i] += 1
                 elif e[0] == 'opm' and e[1] == 0x0F:
-                    tr.noise = e[2]
+                    trs[7].noise = e[2]                 # OPM noise: channel H only
+                elif e[0] == 'pan':
+                    pans[i].add(e[1])
         if all(tr.ended or tr.loop_pos is not None for tr in trs):
             break
-    return notes, noise
+    return notes, noise, pans
+
+def doubling(a, b):
+    """a copying b (same onset, unison or octaves) at the best delay 0-48 ticks:
+    (fraction of a's notes, delay, fraction of those panned differently)."""
+    best = (0, 0, 0)
+    if not a or not b:
+        return best
+    for d in range(49):
+        on = {t + d: (n, p) for t, n, p in b}
+        m = [(p, on[t][1]) for t, n, p in a if t in on and (n - on[t][0]) % 12 == 0 and abs(n - on[t][0]) <= 24]
+        if len(m) > best[0]:
+            best = (len(m), d, sum(1 for p, q in m if p != q))
+    return best[0] / len(a), best[1], best[2] / max(1, best[0])
 
 def choose_dropped(mdx):
     """Pick the two MDX channels that are not played on the YM2612.
-    Returns (dropped, fm6): fm6 is the kept channel that goes on FM6, which
-    the DAC takes over while a sound effect plays - the one with the smallest
-    pitch range (drums / bass pedal), so the melody is never cut by shots."""
-    notes, noise = track_stats(mdx)
-    score = []
-    for i, ns in enumerate(notes):
-        if not ns:
-            score.append((1e6, i)); continue       # unused channel: free to drop
-        s = sum(ns) / len(ns)
-        if noise[i]:
-            s += 1000                               # the YM2612 has no noise
-        if any(notes[j][:64] == ns[:64] for j in range(len(notes)) if j != i and j < i):
-            s += 500                                # echo of an earlier channel
-        score.append((s, i))
-    score.sort(reverse=True)
-    drop = sorted(i for _, i in score[:2])
+
+    Unused channels and channels that only double another one (unison / octave
+    layering, echo copies) go first - the copied part still sounds.  If a song
+    has fewer than two, the channel that most often doubles a note of the
+    remaining ones (chord voices in unison) follows.
+    Returns (dropped, fm6, center): fm6 is the kept channel that goes on FM6,
+    which the DAC takes over while a sound effect plays - the one with the
+    smallest pitch range (drums / pedal bass), so the melody is never cut by
+    shots; center = kept channels whose stereo partner was dropped."""
+    notes, noise, pans = track_stats(mdx)
+    n = len(notes)
+    drop = [i for i in range(n) if not notes[i]][:2]
+    center = set()
+    cands = []
+    for i in range(n):
+        for j in range(n):
+            if i != j and notes[i] and notes[j]:
+                f, d, pd = doubling(notes[i], notes[j])
+                if f >= 0.7:
+                    cands.append((f, d == 0 and i > j, i, j, d, pd))
+    cands.sort(reverse=True)            # best copies first; of a mutual unison pair drop the later channel
+    copies = []; partial = []
+    for f, _, i, j, d, pd in cands:
+        if len(drop) < 2 and i not in drop and j not in drop and all(i != s for _, s, _, _ in copies):
+            drop.append(i); copies.append((i, j, f, d))
+            if pd > 0.25:                               # stereo spread: keep the part in the middle
+                center.add(j)
+    while len(drop) < 2:
+        # partial layering: the channel whose notes most often sound the same
+        # note (or its octave) at the same time on another kept channel (chord voices
+        # doubling each other); a copied channel is kept for its dropped copy
+        sources = {j for _, j, _, _ in copies}
+        live = [k for k in range(n) if k not in drop]
+        score = []
+        for i in live:
+            if i in sources:
+                continue
+            oth = [{t: x for t, x, _ in notes[k]} for k in live if k != i]
+            r = sum(1 for t, x, _ in notes[i]
+                    if any(t in o and abs(o[t] - x) in (0, 12) for o in oth)) / len(notes[i])
+            score.append((r + (0.05 if noise[i] else 0), i))
+        r, i = max(score)
+        drop.append(i); partial.append((i, r))
+    drop.sort()
     kept = [i for i in range(8) if i not in drop]
-    rng = lambda i: (max(notes[i]) - min(notes[i]) if notes[i] else -1, len(notes[i]), -i)
+    rng = lambda i: (max(x[1] for x in notes[i]) - min(x[1] for x in notes[i]) if notes[i] else -1,
+                     len(notes[i]), -i)
     fm6 = min(kept, key=rng)
-    return drop, fm6
+    center -= set(drop)
+    return drop, fm6, center, copies, partial
 
 def voice_bytes(v):
     """28 bytes: no, FB/ALG, slot mask, carrier mask, then 4 x (DT1/MUL, TL, KS/AR, AM/D1R, D2R, D1L/RR)."""
@@ -98,7 +145,7 @@ def main(cnf, bgmdir, out):
         if name in songs:
             continue
         mdx = MDX(open(os.path.join(bgmdir, name + '.MDX'), 'rb').read())
-        drop, fm6 = choose_dropped(mdx)
+        drop, fm6, center, copies, partial = choose_dropped(mdx)
         vb = []
         for vno in sorted(mdx.voices):
             vb += voice_bytes(mdx.voices[vno])
@@ -116,10 +163,13 @@ def main(cnf, bgmdir, out):
                 kinds.append(fm); fm += 1
         trk = ', '.join(f'body_{name} + {mdx.tracks[i]}' for i in range(8))
         c.append(f'static const Song song_{name} = {{ {{ {trk} }}, voices_{name}, {len(mdx.voices)}, '
-                 f'{{ {", ".join(str(k) for k in kinds)} }} }};')
+                 f'{{ {", ".join(str(k) for k in kinds)} }}, {sum(1 << i for i in center)} }};')
         size = len(body) + len(vb) + 48
         songs[name] = size; total += size
-        print(f'{name:8s} muted ch {"".join("ABCDEFGH"[i] for i in drop)}  FM6 {"ABCDEFGH"[fm6]}  {size} bytes  {mdx.title.strip()}')
+        cp = ' '.join([f'{"ABCDEFGH"[i]}={"ABCDEFGH"[j]}+{d}({f:.2f})' for i, j, f, d in copies] +
+                      [f'{"ABCDEFGH"[i]}~({r:.2f})' for i, r in partial])
+        print(f'{name:8s} muted ch {"".join("ABCDEFGH"[i] for i in drop)}  FM6 {"ABCDEFGH"[fm6]}  '
+              f'doubles: {cp or "-":28s} centre {"".join("ABCDEFGH"[i] for i in sorted(center)) or "-"}  {size} bytes')
     c.append('const Song *const bgm_table[256] = {')
     for no, mdc in ents:
         c.append(f'  [0x{no:02X}] = &song_{mdc[:-4]},')
@@ -143,8 +193,9 @@ def main(cnf, bgmdir, out):
     open(os.path.join(out, 'bgm.h'), 'w').write('\n'.join([
         '/* generated by tools/convert_bgm.py - do not edit */',
         '#ifndef BGM_H', '#define BGM_H', '#include "types.h"',
-        '/* kind: 0-5 = YM2612 FM channel, $10/$11 = DCSG voice 0/1, $FF = muted */',
-        'typedef struct { const u8 *track[8]; const u8 *voices; u8 nvoices; u8 kind[8]; } Song;',
+        '/* kind: 0-5 = YM2612 FM channel, $10/$11 = DCSG voice 0/1, $FF = muted',
+        '   center: bit n = MDX channel n always panned centre (its doubling partner is muted) */',
+        'typedef struct { const u8 *track[8]; const u8 *voices; u8 nvoices; u8 kind[8]; u8 center; } Song;',
         'extern const Song *const bgm_table[256];',
         'extern const u16 fnum_tab[768];      /* F-number, MIDI 24 + n/64 at block 1 */',
         'extern const u16 psg_tab[768];       /* DCSG period, MIDI n/64 (>> octave) */',

@@ -56,6 +56,7 @@ typedef struct {
     Lfo mp, ma;
     u8 mp_act, ma_act;
     u8 used_noise;
+    u8 center;          /* always panned centre: its doubling channel is muted */
 } MCh;
 
 /* (v >> 8) of a 32-bit field; volatile so gcc can't narrow it into a word
@@ -213,6 +214,10 @@ static void key_on(MCh *c)
         return;
 #endif
     if (c->kind < 0x10) {
+        if (c->noise) {         /* YM2151 noise note: the YM2612 has no noise, rest instead */
+            ym_write(0, 0x28, key_code[c->kind]);
+            return;
+        }
         ym_write(0, 0x28, ((c->voice ? c->voice[2] : 15) << 4) | key_code[c->kind]);
     } else {
         if (c->noise) {
@@ -350,9 +355,9 @@ static void step(MCh *c)
         switch (cmd) {
         case 0xFF: tempo = *c->pos++; break;
         case 0xFE:                                  /* OPM register: only the noise switch */
-            if (c->pos[0] == 0x0F) {
-                c->noise = c->pos[1] >> 7;
-                c->nfreq = c->pos[1] & 31;
+            if (c->pos[0] == 0x0F) {                /* noise replaces OPM channel 8 (H) */
+                ch[NCH - 1].noise = c->pos[1] >> 7;
+                ch[NCH - 1].nfreq = c->pos[1] & 31;
             }
             c->pos += 2;
             break;
@@ -365,7 +370,7 @@ static void step(MCh *c)
             c->pan = *c->pos++ & 3;
             if (c->kind < 0x10) {
                 static const u8 pans[4] = { 0x00, 0x80, 0x40, 0xC0 };
-                fm_reg(c->kind, 0xB4, pans[c->pan]);
+                fm_reg(c->kind, 0xB4, c->center ? 0xC0 : pans[c->pan]);
             }
             break;
         case 0xFB: {
@@ -546,6 +551,7 @@ void music_play(u8 no)
         c->q = 8;
         c->note = -1;
         c->pan = 3;
+        c->center = (song->center >> i) & 1;
         if (c->kind < 0x10)
             fm_reg(c->kind, 0xB4, 0xC0);
     }
