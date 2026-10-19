@@ -52,6 +52,15 @@ def resample(samples, src, dst):
         out.append(int(round(a + (b - a) * f)))
     return out
 
+PEAK = 120          # normalise every effect to this peak (8-bit, around 128)
+
+def normalise(samples):
+    """The X68000 ADPCM data is quiet (p_fire1 peaks at ~1/8 of full scale) and
+    the MD DAC only has the level of one FM channel, so scale each effect up."""
+    peak = max(1, max(abs(v) for v in samples) >> 4)
+    g = max(1.0, PEAK / peak)
+    return [int(v * g) for v in samples]
+
 def to_u8(samples):
     return bytes(max(0, min(255, (s >> 4) + 128)) for s in samples)
 
@@ -73,7 +82,7 @@ def main(cnf, pcmdir, out, wavdir=None):
         key = (fname, rate)
         if key not in files:
             raw = open(os.path.join(pcmdir, os.path.basename(fname)), 'rb').read()
-            pcm = to_u8(resample(adpcm_decode(raw), rate, 15625))
+            pcm = to_u8(normalise(resample(adpcm_decode(raw), rate, 15625)))
             files[key] = (len(blob), len(pcm))
             blob += pcm
             if len(blob) & 1:

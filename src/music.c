@@ -2,8 +2,8 @@
  * MDX music driver (replaces MCDRV / MXDRV, YM2151 -> YM2612 + DCSG).
  *
  * The MDX sequence data is played as is.  Six MDX channels drive YM2612 FM
- * channels, two drive DCSG square channels (the DCSG noise channel when the
- * MDX channel switches the YM2151 noise generator on).  Only the parameters
+ * channels; the other two are muted (kind $FF; the DCSG code path for
+ * kind $10/$11 is kept but not used for now).  Only the parameters
  * both FM chips share are used; YM2151-only features (DT2, hardware LFO,
  * direct register writes other than the noise switch) are ignored.
  *
@@ -15,6 +15,7 @@
 #include "vdp.h"
 
 #define NCH 8
+#define MUTED 0xFF
 
 typedef struct {
     u8 w;               /* 0 saw, 1 square, 2 triangle (+4: fine resolution, same here) */
@@ -44,7 +45,7 @@ typedef struct {
     u8 sp;
     struct { u8 cnt; const u8 *pos; } stk[8];
     /* output */
-    u8 kind;            /* 0-5 FM channel, $10/$11 DCSG voice */
+    u8 kind;            /* 0-5 FM channel, $10/$11 DCSG voice, $FF muted */
     u8 on;
     u16 gate;
     u8 delay;
@@ -102,7 +103,7 @@ static void fm_tl(MCh *c, s16 lfo)
     const u8 *v = c->voice;
     s16 a = atten(c) + lfo;
     u8 i;
-    if (!v)
+    if (!v || c->kind == MUTED)
         return;
     for (i = 0; i < 4; i++) {
         s16 tl = v[8 + i];
@@ -119,7 +120,7 @@ static void fm_voice(MCh *c)
 {
     const u8 *v = c->voice;
     u8 i;
-    if (!v)
+    if (!v || c->kind == MUTED)
         return;
     for (i = 0; i < 4; i++) {
         u8 o = i * 4;
@@ -157,6 +158,8 @@ static void set_pitch(MCh *c)
 {
     s32 p = (s32)(c->note + 15) * 64 + c->detune + shr8(&c->pacc);
     u16 oct, rem;
+    if (c->kind == MUTED)
+        return;
     if (c->mp_act)
         p += shr8(&c->mp.val);
     if (p < 0)
@@ -185,6 +188,8 @@ static void set_pitch(MCh *c)
 static void key_on(MCh *c)
 {
     c->on = 1;
+    if (c->kind == MUTED)
+        return;
 #ifdef MUSIC_SOLO               /* debug: only one MDX channel audible */
     if (c != &ch[MUSIC_SOLO])
         return;
@@ -205,6 +210,8 @@ static void key_off(MCh *c)
     if (!c->on)
         return;
     c->on = 0;
+    if (c->kind == MUTED)
+        return;
     if (c->kind < 0x10)
         ym_write(0, 0x28, key_code[c->kind]);
     else
@@ -349,7 +356,7 @@ static void step(MCh *c)
         vol_changed:
             if (c->kind < 0x10)
                 fm_tl(c, 0);
-            else if (c->on)
+            else if (c->on && c->kind != MUTED)
                 psg_vol(c, 1);
             break;
         case 0xF8: c->q = *c->pos++; break;
@@ -472,7 +479,7 @@ static void tick(void)
                 lfo_tick(&c->ma);
                 if (c->kind < 0x10)
                     fm_tl(c, (s16)shr8(&c->ma.val));
-                else if (c->on)
+                else if (c->on && c->kind != MUTED)
                     psg_vol(c, 1);
             }
         }

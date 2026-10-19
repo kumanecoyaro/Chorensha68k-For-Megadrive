@@ -2,6 +2,7 @@
 """Headless Mega Drive test runner using a libretro core (e.g. Genesis Plus GX).
 
 usage: mdrun.py CORE.so ROM.bin FRAMES OUTPREFIX [--shot N,N,...] [--input SCRIPT] [--wav]
+                 [--opt key=value]   (e.g. genesis_plus_gx_ym2612=nuked (ym2612))
 
 SCRIPT is a comma-separated list of  start-end:BUTTONS  entries, e.g.
   "60-400:R,100-500:B,400-700:L"  (U D L R A B C S = up down left right A B C start)
@@ -20,6 +21,9 @@ JOY = {'B': 0, 'Y': 1, 'S': 3, 'U': 4, 'D': 5, 'L': 6, 'R': 7, 'A': 8, 'X': 9}
 # Genesis Plus GX default mapping: retro B -> MD B? we map MD buttons to retro ids below
 MDMAP = {'A': 'Y', 'B': 'B', 'C': 'A', 'S': 'S', 'U': 'U', 'D': 'D', 'L': 'L', 'R': 'R'}
 
+class Variable(C.Structure):
+    _fields_ = [('key', C.c_char_p), ('value', C.c_char_p)]
+
 class GameInfo(C.Structure):
     _fields_ = [('path', C.c_char_p), ('data', C.c_void_p), ('size', C.c_size_t), ('meta', C.c_char_p)]
 
@@ -32,12 +36,15 @@ STATE_CB = C.CFUNCTYPE(C.c_int16, C.c_uint, C.c_uint, C.c_uint, C.c_uint)
 
 def main():
     core, rom, frames, prefix = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
-    shots = set(); script = []; audio = None
+    shots = set(); script = []; audio = None; opts = {}
     args = sys.argv[5:]
     while args:
         a = args.pop(0)
         if a == '--shot':
             shots = {int(v) for v in args.pop(0).split(',')}
+        elif a == '--opt':                     # core option key=value
+            k, v = args.pop(0).split('=', 1)
+            opts[k.encode()] = C.c_char_p(v.encode())
         elif a == '--wav':
             audio = bytearray()
         elif a == '--input':
@@ -55,6 +62,12 @@ def main():
         if cmd in (RETRO_ENV_GET_SYSTEM_DIRECTORY, RETRO_ENV_GET_SAVE_DIRECTORY):
             C.cast(data, C.POINTER(C.c_char_p))[0] = sysdir.value
             return True
+        if cmd == RETRO_ENV_GET_VARIABLE:
+            var = C.cast(data, C.POINTER(Variable))[0]
+            if var.key in opts:
+                C.cast(data, C.POINTER(Variable))[0].value = opts[var.key].value
+                return True
+            return False
         if cmd == RETRO_ENV_GET_CAN_DUPE:
             C.cast(data, C.POINTER(C.c_bool))[0] = True
             return True

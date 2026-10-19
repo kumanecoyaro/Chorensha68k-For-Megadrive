@@ -17,9 +17,10 @@ X68000 版は起動時に `assets.tgz` を展開し、ADPCM を MCDRV のバッ�
   (15.625 kHz, YM2612 DAC にそのまま書ける形式) に変換。10.4 kHz 指定の番号は伸長済み。
   Z80 ドライバが ROM をバンク切替しながら DAC へ流す（`tools/z80_pcm_driver.py`）。
 * BGM: 13 曲の MDX（YM2151 用、8ch）をそのまま格納し、68000 上の MDX ドライバ（`src/music.c`）が
-  YM2612 と DCSG で演奏する。音色は両チップ共通のパラメータ（ALG/FB/DT1/MUL/TL/KS/AR/AM/D1R/D2R/D1L/RR）
-  だけを使い、DT2・ハードウェア LFO などは無視。FM が 2 音足りない分は曲ごとに 2ch を DCSG の矩形波へ
-  （ノイズを使うチャンネルは DCSG ノイズへ）割り当てる。FM6 は効果音再生中だけ DAC に切り替わる。
+  YM2612 で演奏する。音色は両チップ共通のパラメータ（ALG/FB/DT1/MUL/TL/KS/AR/AM/D1R/D2R/D1L/RR）
+  だけを使い、DT2・ハードウェア LFO などは無視。FM は 6 音なので、曲ごとに 2ch（ノイズ使用・エコー・
+  高音部を優先）を鳴らさない（DCSG 割り当ては現在オフ）。FM6 は効果音再生中だけ DAC に切り替わる。
+* 効果音はサンプルごとにピークを正規化（元の ADPCM は小さく、BGM に埋もれるため）。
 * グラフィック / マップ: MD のタイル・ネームテーブル・スプライト形式に変換済み。
 * `make` の最後に `tools/rom_budget.py` が現在のサイズと、全素材を載せた場合の見積もりを表示する。
   見積もり合計は約 1.7 MB で 4 MB 以内に収まる（下表）。
@@ -68,6 +69,7 @@ make XDF=path/to/CH68_110_1.xdf
 | `tools/z80_pcm_driver.py` | Z80 ドライバ生成（DAC 再生 + YM2612 書き込みキュー） |
 | `tools/mdx.py`, `tools/convert_bgm.py` | MDX 解析 / 音色・DCSG 割り当て・音程表の生成 |
 | `tools/rom_budget.py` | ROM サイズ集計と全素材搭載時の見積もり |
+| `tools/build_variant.sh` | デバッグ用バリアントビルド（`-DNO_MUSIC`, `-DMUSIC_SOLO=n`, `-DYM_LOG`, `-DZ80_PEEK`） |
 | `tools/fixrom.py` | ROM ヘッダとチェックサムの設定 |
 | `tools/mdrun.py` | libretro コア（Genesis Plus GX）でのヘッドレス実行・スクリーンショット |
 

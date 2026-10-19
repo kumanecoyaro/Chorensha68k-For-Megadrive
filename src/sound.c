@@ -24,6 +24,9 @@
 extern const u8 z80_driver[];
 extern const u16 z80_driver_size;
 
+#ifdef Z80_PEEK
+u8 z80_peek[64][4];
+#endif
 static u8 req_no;
 static u16 play_pr, play_frames;
 
@@ -31,6 +34,8 @@ static u16 play_pr, play_frames;
 static u8 queue[QMAX];          /* pending 3-byte writes: part offset, reg, value */
 static u16 qlen;
 static u8 ym_shadow[2][256];
+static u8 dac_on;
+static u8 music_pan6 = 0xC0;   /* FM6 pan wanted by the music ($B6, shared with the DAC) */
 
 static void z80_get_bus(void)
 {
@@ -44,8 +49,22 @@ static void z80_release_bus(void)
     Z80_BUSREQ = 0;
 }
 
+#ifdef YM_LOG
+u16 ym_log_n;
+u8 ym_log[6000 * 4];
+#endif
+
 static void ym_put(u8 part, u8 reg, u8 val)
 {
+#ifdef YM_LOG
+#ifndef YM_LOG_FROM
+#define YM_LOG_FROM 0
+#endif
+    if (ym_log_n < 6000 && frame_count >= YM_LOG_FROM) {
+        u8 *l = &ym_log[ym_log_n++ * 4];
+        l[0] = (u8)frame_count; l[1] = part; l[2] = reg; l[3] = val;
+    }
+#endif
     if (qlen + 3 > QMAX)
         return;
     queue[qlen++] = part << 1;
@@ -53,10 +72,17 @@ static void ym_put(u8 part, u8 reg, u8 val)
     queue[qlen++] = val;
 }
 
-/* part 0/1; key-on register $28 is never filtered */
+/* part 0/1.  Key-on ($28) and frequency ($A0-$AF) writes are never
+ * filtered: $A4-$A6 go to a latch shared by all channels that is only
+ * applied by the following $A0-$A2 write, so they must always come as a pair. */
 void ym_write(u8 part, u8 reg, u8 val)
 {
-    if (reg != 0x28 && ym_shadow[part][reg] == val)
+    if (part == 1 && reg == 0xB6) {             /* the DAC uses FM6's pan */
+        music_pan6 = val;
+        if (dac_on)
+            return;
+    }
+    if (reg != 0x28 && (reg & 0xF0) != 0xA0 && ym_shadow[part][reg] == val)
         return;
     ym_shadow[part][reg] = val;
     ym_put(part, reg, val);
@@ -85,6 +111,7 @@ void sound_init(void)
     for (i = 0; i < 256; i++)
         ym_shadow[0][i] = ym_shadow[1][i] = 0xFF;
     qlen = 0;
+    dac_on = 0;
     req_no = 0;
     play_frames = 0;
     ym_put(0, 0x2B, 0x00);          /* DAC off: FM6 belongs to the music */
@@ -107,16 +134,24 @@ void sound_update(void)
     u16 i, n;
     u8 rd, wr, room;
 
-    if (play_frames && --play_frames == 0)
+    if (play_frames && --play_frames == 0) {
         ym_put(0, 0x2B, 0x00);      /* effect over: FM6 back to the music */
+        ym_put(1, 0xB6, music_pan6);
+        ym_shadow[1][0xB6] = music_pan6;
+        dac_on = 0;
+    }
     if (req_no) {
         e = &pcm_table[req_no];
         req_no = 0;
         if (play_frames && e->priority < play_pr)
             e = NULL;
     }
-    if (e)
-        ym_put(0, 0x2B, 0x80);
+    if (e) {
+        ym_put(0, 0x2B, 0x80);      /* DAC on, centred */
+        ym_put(1, 0xB6, 0xC0);
+        ym_shadow[1][0xB6] = 0xC0;
+        dac_on = 1;
+    }
 
     z80_get_bus();
     if (e) {
@@ -136,6 +171,13 @@ void sound_update(void)
     }
     rd = Z80_RAM[RING_RD];
     wr = Z80_RAM[RING_WR];
+#ifdef Z80_PEEK
+    {
+        extern u8 z80_peek[64][4];
+        u8 *pk = z80_peek[frame_count & 63];
+        pk[0] = Z80_RAM[0x1FF8]; pk[1] = rd; pk[2] = wr; pk[3] = (u8)qlen;
+    }
+#endif
     room = (u8)(rd - wr - 1);
     n = qlen;
     if (n > room)
