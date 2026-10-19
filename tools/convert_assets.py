@@ -106,7 +106,7 @@ def main(xpath, xsp_dir, out_dir):
             for v in cpix[ch]:
                 if v:
                     g.add(bgpal[v], n)
-    g_far.build(12); g_near.build()     # far palette: colours 13-15 are the text colours
+    g_far.build(); g_near.build()
 
     # sprite palettes 2 / 3 come from tools/convert_sprites.py
     g_a, g_b = PalGroup('sprA'), PalGroup('sprB')

@@ -18,7 +18,7 @@ static void hud_build(void)
     int i;
     for (i = 0; i < 32; i++) {
         u8 c = text_grid[0][i];
-        hud_line[i] = c ? 0x8000 | (FONT_TILE_BASE + (c & 0x7F)) : 0;
+        hud_line[i] = c ? 0x8000 | (TEXT_PAL << 13) | (FONT_TILE_BASE + (c & 0x7F)) : 0;
     }
 }
 
@@ -81,13 +81,6 @@ int main(void)
     vdp_init();
     vdp_set_palettes(pal_data, 64);
     vdp_load_tiles(1, bg_tiles, BG_TILE_COUNT - 1);
-    {
-        static const u16 text_colors[3] = TEXT_COLORS;
-        u16 i;
-        VDP_CTRL32 = CRAM_W(13 * 2);            /* palette 0, colours 13-15 */
-        for (i = 0; i < 3; i++)
-            VDP_DATA = text_colors[i];
-    }
     sound_init();
     xsp_init();
     vdp_display(1);

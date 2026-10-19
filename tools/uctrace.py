@@ -96,10 +96,13 @@ def main():
                 state['t5'] = state.get('t5', 0) + 1
                 print('t056', name(addr), 'gf', gf, 'd3', uc.reg_read(UC_M68K_REG_D3), 'd5', uc.reg_read(UC_M68K_REG_D5),
                       'd6', hex(uc.reg_read(UC_M68K_REG_D6)), 'sp', hex(uc.reg_read(UC_M68K_REG_A7)))
-        if addr == sym.get('h_xsp_set') and pcghist is not None:
-            pcghist[uc.reg_read(UC_M68K_REG_D2) >> 4 & 0xFFF] += 1
-        if addr == sym.get('h_xobj_set') and pcghist is not None:
-            pcghist['ref%03x' % (uc.reg_read(UC_M68K_REG_D2) >> 6 & 0xFFF)] += 1
+        if addr in (sym.get('h_xsp_set'), sym.get('h_xobj_set')) and pcghist is not None:
+            sp = uc.reg_read(UC_M68K_REG_A7)
+            ret = struct.unpack('>I', uc.mem_read(sp, 4))[0]
+            if ret >= sym.get('h_xsp_set', 0) and ret < sym.get('h_xsp_set', 0) + 0x40:   # via xsp_set_obj
+                ret = struct.unpack('>I', uc.mem_read(sp + 16, 4))[0]
+            kind = 'pcg' if addr == sym.get('h_xsp_set') else 'ref'
+            pcghist[(fnname(ret - 0x10000), kind, uc.reg_read(UC_M68K_REG_D2) & 0xFFFF)] += 1
         if span:
             if addr == span[0]:
                 state['span0'] = state['n']
@@ -268,7 +271,11 @@ def main():
     if chipcount:
         print('BG chips per 50 game frames:', sorted(chipcount.items())[:40])
     if pcghist:
-        print('calls (pcg>>4 / ref>>6):', pcghist.most_common(15))
+        agg = collections.defaultdict(lambda: [0, set()])
+        for (f, k, v), c in pcghist.items():
+            agg[(f, k)][0] += c; agg[(f, k)][1].add(v)
+        for (f, k), (c, vs) in sorted(agg.items(), key=lambda t: -t[1][0])[:40]:
+            print(f'  {f} {k} {c:6d} ids {min(vs):#x}-{max(vs):#x}')
     if spans:
         spans.sort()
         print('biggest span:', state['spanhist'].most_common(12))

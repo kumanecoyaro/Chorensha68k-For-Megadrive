@@ -112,8 +112,10 @@ FX_INITS = [
     0x0ec0e, 0x0ece0, 0x0edb2, 0x0ee82,         # classes $81-$84: opening debris
     0x0ffd0, 0x100b2, 0x10154, 0x101f8,         # $101 $102 $103 $105 explosions
     0x102a6,                                    # $10e
-    0x10a1a, 0x10b7c,                           # $122 spark, $124 debris
 ]
+# particles (classes $122-$124: one sprite flying off with a lifetime): every
+# allocation is refused (`jsr fn_040b6` -> `jsr h_alloc_none`)
+PARTICLE_INITS = [0x10a1a, 0x10abc, 0x10b7c]
 
 # immediate patches: (address, old bytes hex, new bytes hex, comment)
 def patches():
@@ -197,7 +199,7 @@ def main(xpath, lst, xspdir, out):
         img[addr:addr + len(nb)] = nb
 
     # ---- hooks
-    names = ['h_alloc_fx']
+    names = ['h_alloc_fx', 'h_alloc_none']
     hs = sorted(h[0] for h in HOOKS)
     for a, b in zip(hs, hs[1:]):
         assert b - a >= 6, f'hook patches overlap at ${a:x} / ${b:x}'
@@ -209,8 +211,8 @@ def main(xpath, lst, xspdir, out):
         struct.pack_into('>HI', img, addr, 0x4EF9, HOOK_BASE + 6 * i)
 
     # effect allocations: retarget the first jsr fn_040b6 of each init function
-    ai = HOOK_BASE + 6 * names.index('h_alloc_fx')
-    for f in FX_INITS:
+    for f in FX_INITS + PARTICLE_INITS:
+        ai = HOOK_BASE + 6 * names.index('h_alloc_fx' if f in FX_INITS else 'h_alloc_none')
         for a in range(f, f + 0x40, 2):
             if img[a:a + 2] == b'\x4e\xb9' and struct.unpack_from('>I', img, a + 2)[0] == ORIG_ROM + 0x40b6:
                 struct.pack_into('>I', img, a + 2, ai)
