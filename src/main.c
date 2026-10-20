@@ -90,27 +90,9 @@ int main(void)
 
     x_bg_load();                            /* fn_053ba (start-up file loading) */
 
-    /* L03e60: option defaults, then "game start" from the title menu */
-    OW(0x4a106) = 0x10;                     /* enemy bullet speed */
-    OW(0x4a108) = 0x30;                     /* player speed */
-    OW(0x4a102) = 1;
-    OW(0x4a10e) = 1;                        /* joystick */
-    OW(0x4a0e0) = 1;
-    OW(0x4a0e6) = 0x10;
-    OW(0x4a0e8) = 0x30;
-    for (;;) {
-        x_text_clear();                     /* (the title screen would have cleared "GAME OVER") */
-        OW(0x4a0f0) = OW(0x4a0f8);
-        OW(0x4a0ee) = 1;                    /* stage 1 */
-        OW(0x4a0f2) = OW(0x4a10a);
-        OW(0x4a0f4) = OW(0x4a106);
-        OW(0x4a0f6) = OW(0x4a108);
-        OW(0x4a0a4) = 0;                    /* no replay */
-#ifdef TEST_MUTEKI
-        OW(0x4a104) = 1;                    /* original debug option: no death */
-#endif
-        OW(0x4a0ee) = (OW(0x4a0f0) << 5) | (OW(0x4a0ee) & 0x1F);
-        ocall(OFN(0x038a2), 0, 0, 0, 0);    /* one game */
-    }
+    /* L03e60: option defaults, the title menu (fn_02dac) and the games it
+     * starts (patched by tools/relocate.py: "exit" and the idle replay demo
+     * stay on the title), forever */
+    ocall(OFN(0x03e60), 0, 0, 0, 0);
     return 0;
 }

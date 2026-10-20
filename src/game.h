@@ -24,6 +24,7 @@ extern u8 text_grid[32][32];
 extern u8 text_row_n[32];
 extern u32 text_row_mask[32];
 extern u8 text_dirty;
+extern u8 text_spr_dirty;      /* a text row shown by sprites changed (x68.c) */
 
 /* ---- main.c */
 void pal_from_orig(void);

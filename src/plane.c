@@ -48,12 +48,15 @@ static u8 loaded = 0xFF, loading = 0xFF;
 static u16 load_pos;
 static s8 shown = -1;                   /* image shown, -1 = none */
 static s16 ax, ay;                      /* anchor of the shown image (screen pixels) */
+static s8 st_img = -2;                  /* image written by write_static (-2: none, rewrite) */
+static u32 st_cols;
+static u8 was_fx;                       /* effects last frame */
 static s16 hs, vs;                      /* plane A scroll: col c at x = c*8 + hs, row r at y = r*8 - vs */
 
 static u16 win[WROWS][32];              /* visible rows, window row k = plane row top + k */
 static u32 win_nz;                      /* window rows holding something */
 static u32 vram_nz[2];                  /* plane rows (0..63) holding something in VRAM */
-static u8 wr_row[WROWS], wr_win[WROWS]; /* rows to write: plane row, window row */
+static u8 wr_row[64], wr_win[64];       /* rows to write: plane row, window row (0xFF: empty row) */
 static volatile u8 wr_n;
 u16 plane_frames, plane_fx;             /* (stats for tools/uctrace.py) */
 
@@ -126,6 +129,64 @@ static void put_ref(const Call *cl, s16 top)
     }
 }
 
+/* the calls shown by the plane image are dropped (a flashing part stays a
+ * sprite, over it) */
+static void drop_image_calls(s8 img, Call *c)
+{
+    if (img == 2) {
+        if (pal_of(c) == 7)
+            c->id = EMPTY_REF;
+    } else {
+        if (pal_of(c) == 5) c->id = EMPTY_REF;
+        if (pal_of(c - 1) == 6) c[-1].id = EMPTY_REF;
+        if (pal_of(c - 2) == 6) c[-2].id = EMPTY_REF;
+    }
+}
+
+/* image columns fully on screen (plane A is as wide as the screen) */
+static u32 visible_cols(const PlaneImg *im, s16 h)
+{
+    u32 m = 0;
+    u8 c;
+    for (c = 0; c < im->w; c++, h += 8)
+        if (h >= 0 && h <= 256 - 8)
+            m |= 1UL << c;
+    return m;
+}
+
+/* image rows into plane rows 0..h-1 (built in win[]), the other rows that
+ * hold something cleared */
+static u16 zero_row[32];
+static void write_static(s8 img, u32 cols)
+{
+    u8 r, c, h = 0, pr;
+    for (r = 0; r < WROWS; r++)
+        for (c = 0; c < 32; c++)
+            win[r][c] = 0;
+    win_nz = 0;
+    if (img >= 0) {
+        const PlaneImg *im = &plane_img[img];
+        const u16 *m = plane_map + im->map;
+        u16 attr = ((u16)im->pal << 13) + ENEMY_BASE - 1;
+        h = im->h;
+        for (r = 0; r < h; r++)
+            for (c = 0; c < im->w; c++, m++)
+                if (*m && (cols >> c & 1))
+                    win[r][c] = attr + *m;
+    }
+    wr_n = 0;
+    for (pr = 0; pr < 64; pr++) {
+        u32 bit = 1UL << (pr & 31), *v = &vram_nz[pr >> 5];
+        if (pr < h) {
+            wr_row[wr_n] = pr; wr_win[wr_n] = pr; wr_n++;
+            *v |= bit;
+        } else if (*v & bit) {
+            wr_row[wr_n] = pr; wr_win[wr_n] = 0xFF; wr_n++;
+            *v &= ~bit;
+        }
+    }
+}
+
 void plane_frame(void)
 {
     s16 best = -1, bd = 0x7FFF, top;
@@ -173,6 +234,25 @@ void plane_frame(void)
 #endif
     }
 
+    /* no effect now or last frame: the image alone, written into plane rows
+     * 0..h-1 only when it or its edge columns change (plane A scrolls it) */
+    for (i = 0, c = calls; i < ncalls; i++, c++)
+        if (is_effect(c))
+            fx++;
+    if (!fx && !was_fx) {
+        u32 cols = img >= 0 ? visible_cols(&plane_img[img], hs) : 0;
+        wr_n = 0;
+        if (img != st_img || cols != st_cols)
+            write_static(img, cols);
+        st_img = img; st_cols = cols;
+        if (img >= 0)
+            drop_image_calls(img, &calls[best]);
+        return;
+    }
+    was_fx = fx != 0;
+    st_img = -2;                        /* (the static image is rewritten afterwards) */
+    fx = 0;
+
     /* the visible rows */
     top = vs >> 3;
     for (k = 0; k < WROWS; k++)
@@ -182,16 +262,7 @@ void plane_frame(void)
     win_nz = 0;
     if (img >= 0) {
         put_image(img, top);
-        /* drop the calls shown by the plane (a flashing part stays a sprite, over it) */
-        c = &calls[best];
-        if (img == 2) {
-            if (pal_of(c) == 7)
-                c->id = EMPTY_REF;
-        } else {
-            if (pal_of(c) == 5) c->id = EMPTY_REF;
-            if (pal_of(c - 1) == 6) c[-1].id = EMPTY_REF;
-            if (pal_of(c - 2) == 6) c[-2].id = EMPTY_REF;
-        }
+        drop_image_calls(img, &calls[best]);
     }
     for (i = 0, c = calls; i < ncalls; i++, c++)
         if (is_effect(c)) {
@@ -214,6 +285,20 @@ void plane_frame(void)
             if (nz) *v |= bit; else *v &= ~bit;
         }
     }
+}
+
+/* x_screen_clear: plane A is being cleared */
+void plane_reset(void)
+{
+    u16 *w = &win[0][0], i;
+    for (i = 0; i < WROWS * 32; i++)
+        w[i] = 0;
+    vram_nz[0] = vram_nz[1] = 0;
+    win_nz = 0;
+    wr_n = 0;
+    shown = -1;
+    st_img = -1; st_cols = 0;           /* (the cleared plane: nothing written) */
+    was_fx = 0;
 }
 
 /* DMA must not cross a 128 KB boundary of the source */
@@ -244,7 +329,7 @@ void plane_upload(void)
         }
     }
     for (i = 0; i < wr_n; i++)
-        vdp_dma_vram(VRAM_PLANE_A + wr_row[i] * 64, win[wr_win[i]], 32);
+        vdp_dma_vram(VRAM_PLANE_A + wr_row[i] * 64, wr_win[i] == 0xFF ? zero_row : win[wr_win[i]], 32);
     wr_n = 0;
     VDP_CTRL32 = VSRAM_W(0);
     VDP_DATA = vs & 511;

@@ -219,6 +219,15 @@ long x_bg_full(void)
     return 0;
 }
 
+/* x_screen_clear: drop the queued writes (the planes are being cleared) */
+void bg_reset(void)
+{
+    irq_off();
+    chipq_n = 0;
+    upq_n = 0;
+    irq_on();
+}
+
 /* VBlank: composite tiles, then the queued chips */
 void bg_chips(void)
 {

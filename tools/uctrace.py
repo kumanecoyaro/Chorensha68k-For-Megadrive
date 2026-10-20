@@ -90,6 +90,7 @@ def main():
     vint = struct.unpack('>I', data[0x78:0x7C])[0]
     rte_addr = data.index(b'\x4e\x73', vint)     # rte of _vint
     wait_lo = sym.get('merge_cell', sym['x_bg_chip']); wait_hi = wait_lo + 0x80   # (chip queue full: waits for VBlank)
+    waits2 = [sym[k] for k in ('x_xsp_out0', 'x_wait', 'x_screen_clear') if k in sym]   # other frame_ready waits
     vs_addr = sym['x_vsync']; vs_lo = vs_addr; vs_hi = sym.get('x_xsp_out', vs_addr + 0x40)
     counters = [sym['vblank_count'], sym['ORIG_VBLCNT']] if 'ORIG_VBLCNT' in sym else [sym['vblank_count']]
     state = {'n': 0, 'vbl': 0}
@@ -197,7 +198,7 @@ def main():
             state['pend'] = True
         # (unicorn evaluates the condition codes lazily, so SR read here can be
         # stale: interrupts are only taken where the program waits for them)
-        if state.get('pend') and not state.get('in_int') and (vs_lo <= addr < vs_hi or wait_lo <= addr < wait_hi):
+        if state.get('pend') and not state.get('in_int') and (vs_lo <= addr < vs_hi or wait_lo <= addr < wait_hi or any(a <= addr < a + 0x60 for a in waits2)):
             sr = uc.reg_read(UC_M68K_REG_SR)
             if (sr >> 8) & 7 < 6:          # take the level-6 interrupt
                 state['pend'] = False
@@ -232,6 +233,8 @@ def main():
             gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]     # B_4a0ca game frame
             if '--autofire' in sys.argv and (gf // 3) % 2:
                 p &= ~0x60
+            if 150 <= state['vbl'] < 156:   # A on the title menu: START
+                p |= 0x40
             if bombs and any(b <= gf < b + 6 for b in bombs):     # --bomb F,F..: B pressed at these game frames
                 p |= 0x10
             if th:

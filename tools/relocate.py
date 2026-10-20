@@ -59,6 +59,7 @@ HOOKS = [
     (0x2ca5e, 'xobj_set', 'r'),         # d0 x, d1 y, d2 ref, d3 info
     (0x2cbda, 'x_vsync', 'c'),
     (0x2cf3a, 'x_xsp_out', 'c'),
+    (0x2cf40, 'x_xsp_out0', 'c'),       # (same without BG scroll: title screen)
     (0x2cf24, 'x_nop', 'c'),            # XSP mode
     (0x2bc86, 'x_nop', 'c'),
     # input (IOCS _BITSNS / _JOYGET wrappers)
@@ -74,9 +75,10 @@ HOOKS = [
     (0x01036, 'x_nop', 'c'),
     (0x00c9c, 'x_nop', 'c'),
     # screen / misc IOCS
-    (0x3975a, 'x_nop', 'c'),
+    (0x3975a, 'x_screen_clear', 'c'),   # IOCS $B2 (graphic screen clear): title, game start
+    (0x00c48, 'x_nop', 'c'),            # replay buffer allocation (replay removed)
     (0x39d92, 'x_nop', 'c'),
-    (0x2ff62, 'x_nop', 'c'),
+    (0x2ff62, 'x_wait', 'c'),           # wait n+1 vertical blanks (title, game over, pause)
     (0x39dda, 'x_nop', 'c'),
     # palettes (graphic / sprite palette registers)
     (0x05224, 'x_pal_upload', 'c'),
@@ -129,6 +131,13 @@ def patches():
         # fn_056ae skips a chip equal to the one already in the page cell; with
         # both layers on one plane (src/bg.c) the far chip under it may differ
         (0x057f0, '6774', '4e71', 'BG: always draw the chip (beq.b L05866 -> nop)'),
+        # title menu (fn_02dac): no replay demo when idle (ble.b L02f34 -> bra.b);
+        # L03e60: "exit" stays on the title (bne.b L03f5c -> bra.b)
+        (0x02f8e, '6fa4', '60a4', 'title: no idle replay demo'),
+        (0x03f46, '6614', '6014', 'title: exit does not quit'),
+        # CONFIGURE is an X68000 512-dot text screen of X68000 settings (screen
+        # mode, XSP mode...): the menu item does nothing (bra.w L02e22)
+        (0x03050, '48780001', '6000fdd0', 'title: CONFIGURE disabled'),
     ]
 
 def main(xpath, lst, xspdir, out):

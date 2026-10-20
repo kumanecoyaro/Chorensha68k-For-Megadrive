@@ -205,15 +205,76 @@ void xsp_init(void)
 /* text rows 1.. as 8x8 sprites (row 0 is on the window plane) */
 void xsp_call(s16 x, s16 y, u16 id, u16 info);
 
+static u8 last_ntext;                   /* text sprites at the front of the last table */
+
 static void text_sprites(void)
 {
-    u8 r, c;
+    u8 r, c, n = 0;
     for (r = 1; r < 28; r++) {
         u32 m = text_row_mask[r];
         for (c = 0; m; c++, m >>= 1)
-            if (m & 1)
+            if (m & 1) {
                 xsp_call(c * 8, r * 8, 0xC000 | (FONT_TILE_BASE + (text_grid[r][c] & 0x7F)), 63);
+                n++;
+            }
     }
+    last_ntext = n < MAX_HW ? n : MAX_HW;
+    text_spr_dirty = 0;
+}
+
+/* x_wait (src/x68.c): the last table with its text sprites (its first
+ * entries: the very front) replaced by the current text.  The other sprites
+ * of the last flush are kept aside on the first refresh (in the tail of the
+ * tile staging buffer, unused until the next flush), so text that does not
+ * leave them room does not lose them for good. */
+static u8 base_n, base_valid;
+#define BASE ((HwSpr *)(stage + STAGE_BYTES - MAX_HW * sizeof(HwSpr)))
+void xsp_text_refresh(void)
+{
+    u8 r, c, n = 0, rest, i;
+    if (!base_valid) {
+        if (last_ntext > ntable)
+            last_ntext = ntable;
+        base_n = ntable - last_ntext;
+        for (i = 0; i < base_n; i++)
+            BASE[i] = table[last_ntext + i];
+        base_valid = 1;
+    }
+    for (r = 1; r < 28; r++) {
+        u32 m = text_row_mask[r];
+        for (; m; m &= m - 1)
+            n++;
+    }
+    if (n > MAX_HW)
+        n = MAX_HW;
+    rest = base_n;
+    if (n + rest > MAX_HW)
+        rest = MAX_HW - n;
+    for (i = 0; i < rest; i++)
+        table[n + i] = BASE[i];
+    i = 0;
+    for (r = 1; r < 28 && i < n; r++) {
+        u32 m = text_row_mask[r];
+        for (c = 0; m && i < n; c++, m >>= 1)
+            if (m & 1) {
+                table[i].y = r * 8 + 128;
+                table[i].size = 0;      /* 1x1 */
+                table[i].attr = 0x8000 | (TEXT_PAL << 13) | (FONT_TILE_BASE + (text_grid[r][c] & 0x7F));
+                table[i].x = c * 8 + 128;
+                i++;
+            }
+    }
+    n = n + rest;
+    if (!n) {
+        table[0].y = 0; table[0].attr = 0; table[0].x = 1;
+        n = 1;
+    }
+    for (i = 0; i < n; i++)
+        table[i].size = (table[i].size & 0x0F00) | (i + 1 < n ? i + 1 : 0);
+    ntable = n;
+    last_ntext = n - rest;
+    table_ready = 1;
+    text_spr_dirty = 0;
 }
 
 u16 xsp_build(HwSpr *t);
@@ -235,6 +296,7 @@ void xsp_flush(void)
     ntable = n;
     ncalls = 0;
     fx_stage = fx_bslots = 0;
+    base_valid = 0;
     pr_lo = 64; pr_hi = 0;
     table_ready = 1;
     xframe++;

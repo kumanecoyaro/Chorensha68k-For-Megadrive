@@ -125,6 +125,9 @@ long x_vsync(long n)
 {
     long waited = 0;
     (void)n;
+#ifdef TEST_MUTEKI
+    OW(0x4a104) = 1;                /* original debug option: no death (the title resets it) */
+#endif
     while (frame_ready)
         waited = 1;
     PROBE(0);
@@ -146,11 +149,63 @@ long x_xsp_out(long p)
     return 1;
 }
 
+/* fn_2cf40: the same without BG scroll (title screen) */
+long x_xsp_out0(void)
+{
+    while (frame_ready)
+        ;
+    xsp_flush();
+    frame_ready = 1;
+    return 1;
+}
+
+/* fn_2ff62(n): wait n + 1 vertical blanks (title menu, game over, pause,
+ * ranking).  The original's text screen shows at once; here the text rows
+ * below the score line are sprites, so text changed meanwhile is put into
+ * the last frame's sprite list. */
+void xsp_text_refresh(void);
+long x_wait(long n)
+{
+    u16 i;
+    for (i = 0; i <= (u16)n; i++) {
+        while (frame_ready)
+            ;
+        if (text_spr_dirty)
+            xsp_text_refresh();
+        frame_ready = 1;
+        while (frame_ready)
+            ;
+    }
+    return 0;
+}
+
+/* fn_3975a (IOCS $B2, graphic screen clear: title screen, game start):
+ * both planes */
+void bg_reset(void);
+void plane_reset(void);
+long x_screen_clear(long mode)
+{
+    u16 i;
+    (void)mode;
+    while (frame_ready)
+        ;
+    bg_reset();
+    plane_reset();
+    for (i = 0; i < 16; i++) {          /* planes A ($C000) and B ($E000), 4 KB each */
+        __asm__ volatile("move.w #0x2700, %sr");
+        vdp_fill(VRAM_PLANE_A + i * 256, 0, 128);
+        vdp_fill(VRAM_PLANE_B + i * 256, 0, 128);
+        __asm__ volatile("move.w #0x2500, %sr");
+    }
+    return 0;
+}
+
 /* ------------------------------------------------------------------ text */
 u8 text_grid[32][32];
 u8 text_row_n[32];              /* non-blank characters per row */
 u32 text_row_mask[32];          /* bit c = column c holds a character */
 u8 text_dirty;
+u8 text_spr_dirty;              /* a row shown by sprites (1..) changed since the last flush */
 
 /* fn_2f06a(x, y, ch) */
 long x_text_putc(long x, long y, long ch)
@@ -165,6 +220,8 @@ long x_text_putc(long x, long y, long ch)
             text_row_mask[y & 31] &= ~(1UL << (x & 31));
         *p = c;
         text_dirty = 1;
+        if (y & 31)
+            text_spr_dirty = 1;
     }
     return 0;
 }
@@ -181,6 +238,7 @@ long x_text_clear(void)
         text_row_mask[i] = 0;
     }
     text_dirty = 1;
+    text_spr_dirty = 1;
     return 0;
 }
 
