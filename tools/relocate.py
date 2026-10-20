@@ -106,14 +106,6 @@ HOOKS = [
     (0x39750, 'x_nop', 'c'),
 ]
 
-# The stage start explosion chain (classes $84 / $85 spawning each other):
-# every other allocation is refused (`jsr fn_040b6` -> `jsr h_alloc_fx`),
-# halving the chain.  The explosions of destroyed enemies are not refused (a
-# single explosion would come and go from enemy to enemy); they are halved
-# when drawn (src/xsp_fast.s) and in explosion sequences (h_seq_spawn below).
-FX_INITS = [
-    0x0ee82, 0x0ef7e,                           # $84 $85
-]
 # particles (parts flying off destroyed enemies, sparks): every allocation is
 # refused (`jsr fn_040b6` -> `jsr h_alloc_none`)
 PARTICLE_INITS = [
@@ -203,7 +195,7 @@ def main(xpath, lst, xspdir, out):
         img[addr:addr + len(nb)] = nb
 
     # ---- hooks
-    names = ['h_alloc_fx', 'h_alloc_none', 'h_seq_spawn']
+    names = ['h_alloc_none']
     hs = sorted(h[0] for h in HOOKS)
     for a, b in zip(hs, hs[1:]):
         assert b - a >= 6, f'hook patches overlap at ${a:x} / ${b:x}'
@@ -214,22 +206,15 @@ def main(xpath, lst, xspdir, out):
         i = names.index(sym)
         struct.pack_into('>HI', img, addr, 0x4EF9, HOOK_BASE + 6 * i)
 
-    # effect allocations: retarget the first jsr fn_040b6 of each init function
-    for f in FX_INITS + PARTICLE_INITS:
-        ai = HOOK_BASE + 6 * names.index('h_alloc_fx' if f in FX_INITS else 'h_alloc_none')
+    # particle allocations: retarget the first jsr fn_040b6 of each init function
+    ai = HOOK_BASE + 6 * names.index('h_alloc_none')
+    for f in PARTICLE_INITS:
         for a in range(f, f + 0x40, 2):
             if img[a:a + 2] == b'\x4e\xb9' and struct.unpack_from('>I', img, a + 2)[0] == ORIG_ROM + 0x40b6:
                 struct.pack_into('>I', img, a + 2, ai)
                 break
         else:
             raise SystemExit(f'no jsr fn_040b6 in ${f:x}')
-
-    # explosion sequences (class $10f: a row / ring of explosions spawned one
-    # by one, e.g. when a large enemy is destroyed): the spawn call
-    # (movea.l d0,a1 / movea.l (a1),a0 / jsr (a0)) -> jsr h_seq_spawn, which
-    # spawns only every other one
-    assert img[0x10884:0x1088a] == bytes.fromhex('224020514e90')
-    struct.pack_into('>HI', img, 0x10884, 0x4EB9, HOOK_BASE + 6 * names.index('h_seq_spawn'))
 
     # ---- RAM initial image (data vars / routines copied to RAM)
     rimg = bytearray(ram_size)

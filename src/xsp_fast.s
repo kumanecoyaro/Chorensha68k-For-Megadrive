@@ -28,7 +28,7 @@
     .set    EFFECT_PR, 0x31                 | effects: below the enemies ($34)
     .set    EXPL4_LO, 0x0C0                 | expl4 (the enemy explosions, one sprite per
     .set    EXPL4_HI, 0x210                 | PCG): every other PCG of each frame is drawn
-    .set    FX_MAX, 20                      | at most this many effect sprites
+    .set    FX_MAX, 24                      | at most this many effect sprites
     .set    DEBRIS_LO, 0x0B4                | debris.sp (particles): not drawn
     .set    DEBRIS_HI, 0x104
 
@@ -160,13 +160,32 @@ xsp_build:
     cmp.w   pr_lo, %d0
     blt     90f
     move.w  #MAX_HW, hw_limit
+    move.w  #0x7FFF, fx_cap
     cmp.w   #EFFECT_PR, %d0
     bne.s   3f
     move.w  %d7, %d1                    | effects: FX_MAX more at most
     add.w   #FX_MAX, %d1
     cmp.w   #MAX_HW, %d1
-    bcc.s   3f
+    bcc.s   4f
     move.w  %d1, hw_limit
+4:  lea     bhead, %a1                  | shared fairly: every explosion gets
+    moveq   #0, %d1                     | 2 * FX_MAX / count pieces (half drawn)
+    move.b  0(%a1,%d0.w), %d1
+    lea     call_next, %a1
+    moveq   #0, %d2
+5:  cmp.b   #0xFF, %d1
+    beq.s   6f
+    addq.w  #1, %d2
+    move.b  0(%a1,%d1.w), %d1
+    bra.s   5b
+6:  tst.w   %d2
+    beq.s   3f
+    move.l  #2 * FX_MAX, %d1
+    divu    %d2, %d1
+    cmp.w   #2, %d1
+    bcc.s   7f
+    moveq   #2, %d1
+7:  move.w  %d1, fx_cap
 3:  lea     bhead, %a1
     moveq   #0, %d6
     move.b  0(%a1,%d0.w), %d6
@@ -281,7 +300,10 @@ xsp_build:
     move.w  2(%a1,%d2.w), %d1
     sub.w   %d0, %d1
     beq     69f
-    subq.w  #1, %d1
+    cmp.w   fx_cap, %d1
+    bls.s   28f
+    move.w  fx_cap, %d1
+28: subq.w  #1, %d1
     move.w  %d1, -(%sp)                 | (sp) = pieces left - 1
     lsl.l   #3, %d0
     lea     ref_pieces, %a3
@@ -411,6 +433,7 @@ lookup_slow:
     .globl  stat_pieces, stat_calls, stat_out, stat_rec
 rec_pr:      .word 0
 hw_limit:    .word 0
+fx_cap:      .word 0
     .balign 2
 stat_pieces: .long 0
 stat_calls:  .long 0
