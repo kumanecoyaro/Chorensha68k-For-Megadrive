@@ -106,13 +106,13 @@ HOOKS = [
     (0x39750, 'x_nop', 'c'),
 ]
 
-# Explosion objects: their init functions get every other object allocation refused
-# (`jsr fn_040b6` -> `jsr h_alloc_fx`), halving the number of effect
-# objects - their logic and their sprites.
+# The stage start explosion chain (classes $84 / $85 spawning each other):
+# every other allocation is refused (`jsr fn_040b6` -> `jsr h_alloc_fx`),
+# halving the chain.  The explosions of destroyed enemies are not refused (a
+# single explosion would come and go from enemy to enemy); they are halved
+# when drawn (src/xsp_fast.s) and in explosion sequences (h_seq_spawn below).
 FX_INITS = [
-    0x0ee82, 0x0ef7e,                           # $84 $85 explosions (expl4)
-    0x0ffd0, 0x100b2, 0x10154, 0x101f8,         # $101 $102 $103 $105 explosions
-    0x102a6,                                    # $10e
+    0x0ee82, 0x0ef7e,                           # $84 $85
 ]
 # particles (parts flying off destroyed enemies, sparks): every allocation is
 # refused (`jsr fn_040b6` -> `jsr h_alloc_none`)

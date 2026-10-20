@@ -10,7 +10,7 @@
     .text
 | (register-argument XSP calls h_xsp_set / h_xsp_set_obj / h_xobj_set: src/xsp_fast.s)
 
-| ---- allocation for effect objects (tools/relocate.py FX_INITS): every
+| ---- allocation for the stage start explosion chain (tools/relocate.py FX_INITS): every
 | other request gets "pool empty" (d0 = a0 = 0), the rest fn_040b6;
 | particles (PARTICLE_INITS) always get "pool empty"
     .globl  h_alloc_fx, h_alloc_none, fx_alloc_toggle
@@ -25,15 +25,13 @@ h_alloc_none:
 
 | ---- explosion sequence (class $10f, a3 = object, d0 -> class table entry):
 | spawn only while the remaining count ($50, decremented after each spawn) is
-| odd, so a sequence makes half as many explosions; those always get their
-| object (no second halving by h_alloc_fx)
+| odd, so a sequence makes half as many explosions
     .globl  h_seq_spawn
 h_seq_spawn:
     btst    #0, 0x51(%a3)
     beq.s   1f
     movea.l %d0, %a1
     movea.l (%a1), %a0
-    clr.w   fx_alloc_toggle
     jmp     (%a0)
 1:  rts
 

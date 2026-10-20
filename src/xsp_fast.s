@@ -26,6 +26,8 @@
     .set    PARTICLE_LO, 0x210              | spark, debris1, debris2: not drawn
     .set    PARTICLE_HI, 0xAA8
     .set    EFFECT_PR, 0x31                 | effects: below the enemies ($34)
+    .set    EXPL4_LO, 0x0C0                 | expl4 (the enemy explosions, one sprite per
+    .set    EXPL4_HI, 0x210                 | PCG): every other PCG of each frame is drawn
     .set    FX_MAX, 20                      | at most this many effect sprites
     .set    DEBRIS_LO, 0x0B4                | debris.sp (particles): not drawn
     .set    DEBRIS_HI, 0x104
@@ -100,8 +102,9 @@ h_xsp_set:
 | Sprite budget (64 per frame): the player ship is drawn before everything
 | but the text and the bomb ($3F; the priorities in use stay within $31-$3F
 | so the list scan in xsp_build stays short);
-| explosions (refs EFFECT_LO..EFFECT_HI) only every other call, behind
-| everything else and FX_MAX sprites at most; particles (sparks, debris,
+| explosions (refs EFFECT_LO..EFFECT_HI) behind everything else and FX_MAX
+| sprites at most, expl4 with every other PCG only (every explosion is shown,
+| each one with half the sprites); particles (sparks, debris,
 | debris.sp PCGs) are not drawn at all,
 | so they no longer push the player, enemies and bullets out of the sprite
 | table (or eat the frame time).
@@ -122,8 +125,6 @@ h_xobj_set:
     bcc.s   8f
     cmp.w   #PARTICLE_LO, %d2
     bcc.s   9f                          | particles are not drawn
-    eori.w  #1, fx_toggle
-    beq.s   9f                          | every other effect is not drawn
     cmp.w   #EFFECT_PR, %d4
     bls.s   8f
     moveq   #EFFECT_PR, %d4
@@ -267,6 +268,12 @@ xsp_build:
     rol.w   #2, %d6
     and.w   #3, %d6
     lsl.w   #4, %d6                     | object flips at bits 4 (H) / 5 (V)
+    cmp.w   #EXPL4_LO, %d2
+    bcs.s   29f
+    cmp.w   #EXPL4_HI, %d2
+    bcc.s   29f
+    or.w    #0x100, %d6                 | bit 8: draw every other piece
+29:
     add.w   %d2, %d2
     lea     ref_start, %a1
     moveq   #0, %d0
@@ -279,7 +286,13 @@ xsp_build:
     lsl.l   #3, %d0
     lea     ref_pieces, %a3
     add.l   %d0, %a3
-31: move.w  (%a3)+, %d0                 | dx
+31: btst    #8, %d6
+    beq.s   39f
+    btst    #0, 1(%sp)                  | odd pieces-left count: skipped
+    beq.s   39f
+    addq.l  #8, %a3
+    bra     68f
+39: move.w  (%a3)+, %d0                 | dx
     move.w  (%a3)+, %d1                 | dy
     moveq   #0, %d2
     move.b  (%a3)+, %d2                 | size | flips << 4
@@ -395,10 +408,9 @@ lookup_slow:
     .section .note.GNU-stack,"",%progbits
 
     .bss
-    .globl  stat_pieces, stat_calls, stat_out, stat_rec, fx_toggle
+    .globl  stat_pieces, stat_calls, stat_out, stat_rec
 rec_pr:      .word 0
 hw_limit:    .word 0
-fx_toggle:   .word 0
     .balign 2
 stat_pieces: .long 0
 stat_calls:  .long 0

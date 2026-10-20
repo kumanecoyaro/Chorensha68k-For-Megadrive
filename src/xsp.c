@@ -172,7 +172,6 @@ void xsp_init(void)
 
 /* text rows 1.. as 8x8 sprites (row 0 is on the window plane) */
 void xsp_call(s16 x, s16 y, u16 id, u16 info);
-extern u16 fx_toggle;
 
 static void text_sprites(void)
 {
@@ -200,7 +199,6 @@ void xsp_flush(void)
     }
     ntable = n;
     ncalls = 0;
-    fx_toggle = 0;                      /* the same effects are skipped every frame */
     pr_lo = 64; pr_hi = 0;
     table_ready = 1;
     xframe++;
