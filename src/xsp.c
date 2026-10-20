@@ -18,10 +18,10 @@
 #include "vdp.h"
 #include "spr.h"
 
-#define CACHE_A_BASE  532           /* VRAM tile of the first 4-tile slot (after BG + composites) */
-#define CACHE_A_SLOTS 136
+#define CACHE_A_BASE  BG_TILE_COUNT   /* VRAM tile of the first 4-tile slot (after the BG tiles) */
+#define CACHE_A_SLOTS 128
 #define CACHE_B_BASE  (CACHE_A_BASE + CACHE_A_SLOTS * 4)
-#define CACHE_B_SLOTS 28            /* (ends at tile 1524, plane A at $C000 = tile 1536) */
+#define CACHE_B_SLOTS 28            /* (ends at tile 1362: src/plane.c tiles 1364..1523) */
 #define NSLOT (CACHE_A_SLOTS + CACHE_B_SLOTS)
 #define HASH_SIZE 512                   /* open addressing, key = block << 4 | palette */
 #define KEY_EMPTY 0xFFFF
@@ -188,9 +188,12 @@ u16 xsp_build(HwSpr *t);
 void xsp_call(s16 x, s16 y, u16 id, u16 info);
 
 /* end of frame: front (high priority) first, keep the first 64 */
+void plane_frame(void);
+
 void xsp_flush(void)
 {
     u16 n;
+    plane_frame();                      /* (may drop the calls of a large enemy) */
     text_sprites();
     n = xsp_build(table);
     if (!n) {

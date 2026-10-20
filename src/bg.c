@@ -21,8 +21,14 @@
 
 long ocall(void *fn, long a1, long a2, long a3, long a4);
 
-#define COMP_BASE  BG_TILE_COUNT            /* VRAM tile of the first composite slot */
-#define COMP_SLOTS 128
+/* composite slots live in VRAM the H32 layout leaves unused (1 cell row of
+ * the window plane, 64 sprites of the 80-entry table, a full-screen scroll
+ * table): $D040-$D7FF, $DA00-$DBFF, $DC20-$DE5F (peak use in stage 1: 78) */
+#define COMP_SLOTS 96
+static u16 slot_tile(u8 s)
+{
+    return s < 62 ? 0xD040 / 32 + s : s < 78 ? 0xDA00 / 32 + s - 62 : 0xDC20 / 32 + s - 78;
+}
 #define CHIPQ 32
 #define UPQ   64
 
@@ -92,7 +98,7 @@ static u16 comp_get(u16 c)
     u8 s = slot_of[c - 1], n;
     if (s) {
         slot_ref[s - 1]++;
-        return COMP_BASE + s - 1;
+        return slot_tile(s - 1);
     }
     for (n = 0; n < COMP_SLOTS; n++) {
         s = slot_clock;
@@ -118,11 +124,11 @@ static u16 comp_get(u16 c)
             comp_peak = used;
     }
     irq_off();
-    upq[upq_n].vram = (COMP_BASE + s) * 32;
+    upq[upq_n].vram = slot_tile(s) * 32;
     upq[upq_n].comp = c - 1;
     upq_n++;
     irq_on();
-    return COMP_BASE + s;
+    return slot_tile(s);
 }
 
 /* ------------------------------------------------------------ far row */

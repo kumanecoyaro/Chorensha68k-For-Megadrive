@@ -34,6 +34,18 @@ XSP = ['title', 'bullet32', 'bullet_l', 'sonic1', 'sonic2', 'expl2', 'expl3', 'e
 REF_EXTRA = {'sonic2': [('ele_arc', 0x50)], 'spark': [('debris1', 0xC4)]}
 
 TEXT_XPAL = 2          # X68000 sprite palette used as the text palette
+# large enemies drawn on plane A (src/plane.c): groups of images (one group's
+# tiles are in VRAM at a time); image = refs (file, index, x offset, object
+# palette) composited in drawing order (later = front)
+PLANE_GROUPS = [
+    [   # obj202 crab: halves 0..4 px apart, as two images (0 and 4 px)
+        [('obj202', 0, 0, 6), ('obj202', 1, 0, 6), ('obj202', 2, 0, 5)],
+        [('obj202', 0, -4, 6), ('obj202', 1, 4, 6), ('obj202', 2, 0, 5)],
+    ],
+    [   # obj204 stage 1 boss
+        [('obj204', 0, 0, 7)],
+    ],
+]
 MERGE_MIN = 1          # refs with more frm entries are composited into blocks of up to 32x32
                        # (a 32x32 enemy made of four 16x16 PCGs becomes one hardware sprite)
 # effects made of many scattered / mirrored PCGs: compositing them would cost
@@ -78,6 +90,15 @@ class Blocks:
             self.data += tiles
         return self.index[key]
 
+class TileSet:
+    def __init__(self):
+        self.tiles = []; self.index = {}
+    def add(self, data):
+        if data not in self.index:
+            self.index[data] = len(self.tiles)
+            self.tiles.append(data)
+        return self.index[data]
+
 def tile_bytes(px):
     return bytes((px[i] << 4) | px[i + 1] for i in range(0, 64, 2))
 
@@ -101,12 +122,15 @@ def main(xsp, out):
     idx_freq = collections.Counter()
     pieces = []; ref_start = []
     per_file = []
+    ref_first = {}; ref_src = []
     for name, base in reflist:
+        ref_first[name] = len(ref_start)
         before = len(blocks.data)
         per_file.append((name, lambda b=before: len(blocks.data) - b))
         ref = rd(name + '.ref'); frm = rd(name + '.frm')
         for r in range(len(ref) // 8):
             cnt, off = struct.unpack_from('>hI', ref, r * 8)
+            ref_src.append((frm, off, cnt, base))
             ref_start.append(len(pieces))
             groups = collections.OrderedDict()
             ax = ay = 0
@@ -217,6 +241,42 @@ def main(xsp, out):
                 px.append(m0[v])
         font += tile_bytes(px)
 
+    # ---- large enemies drawn on plane A (src/plane.c): pre-composited images
+    # of their refs as drawn by the game, anchored at the call position
+    # (x >> 6, y >> 6); tiles in MD colour numbers of one MD palette.
+    pimg = []; ptiles = []; pmaps = []; pgroups = []
+    for group in PLANE_GROUPS:
+        gtiles = TileSet(); first = len(pimg)
+        for parts in group:
+            pix = {}; mdpal = None
+            for rname, ri, dx, objpal in parts:
+                frm, off, cnt, base = ref_src[ref_first[rname] + ri]
+                ax = ay = 0
+                for j in range(cnt):
+                    vx, vy, pt, info = struct.unpack_from('>hhhH', frm, off + j * 8)
+                    ax += vx; ay += vy
+                    xp = ((info >> 8) & 15) ^ objpal
+                    assert mdpal in (None, slot[xp]), 'plane image with two MD palettes'
+                    mdpal = slot[xp]
+                    px = pcg16(pcg, pt + base)
+                    for y in range(16):
+                        for x in range(16):
+                            v = px[(15 - y if info & 0x8000 else y) * 16 + (15 - x if info & 0x4000 else x)]
+                            if v:
+                                pix[(ax - 16 + x + dx, ay - 16 + y)] = lut[xp][v] & 15
+            xs = [p[0] for p in pix]; ys = [p[1] for p in pix]
+            ox, oy = min(xs), min(ys)
+            w = (max(xs) - ox) // 8 + 1; h = (max(ys) - oy) // 8 + 1
+            moff = len(pmaps)
+            for ty in range(h):
+                for tx in range(w):
+                    t = [pix.get((ox + tx * 8 + x, oy + ty * 8 + y), 0) for y in range(8) for x in range(8)]
+                    pmaps.append(gtiles.add(tile_bytes(t)) + 1 if any(t) else 0)
+            pimg.append((ox, oy, w, h, moff, 2 + mdpal, len(pgroups)))
+        pgroups.append((len(ptiles), len(gtiles.tiles), first, len(pimg) - first))
+        ptiles += gtiles.tiles
+    print('plane images:', [(i[2], i[3]) for i in pimg], 'group tiles:', [g[1] for g in pgroups])
+
     # ---- write
     os.makedirs(out, exist_ok=True)
     open(os.path.join(out, 'spr_tiles.bin'), 'wb').write(blocks.data)
@@ -243,6 +303,21 @@ def main(xsp, out):
         L.append('  ' + ','.join(f'0x{v:08x}' for v in fw[i:i + 8]) + ',')
     L.append('};')
     arr('u8', 'pal_slot', [2 + s for s in slot])
+    L.append(f'const PlaneImg plane_img[{len(pimg)}] = {{')
+    for ox, oy, w, h, moff, pal, g in pimg:
+        L.append(f'  {{{ox},{oy},{w},{h},{moff},{pal},{g}}},')
+    L.append('};')
+    L.append(f'const PlaneGroup plane_group[{len(pgroups)}] = {{')
+    for t0, nt, i0, ni in pgroups:
+        L.append(f'  {{{t0},{nt},{i0},{ni}}},')
+    L.append('};')
+    arr('u16', 'plane_map', pmaps)
+    pt = b''.join(ptiles)
+    L.append(f'const u32 plane_tiles[{len(pt) // 4}] = {{')
+    fw = struct.unpack(f'>{len(pt) // 4}I', pt)
+    for i in range(0, len(fw), 8):
+        L.append('  ' + ','.join(f'0x{v:08x}' for v in fw[i:i + 8]) + ',')
+    L.append('};')
     arr('u8', 'pal_lut', sum(lut, []), 32)
     open(os.path.join(out, 'spr.c'), 'w').write('\n'.join(L) + '\n')
     H = ['/* generated by tools/convert_sprites.py - do not edit */', '#ifndef SPR_H', '#define SPR_H',
@@ -257,6 +332,13 @@ def main(xsp, out):
          'extern const u16 spr_cram[32];', 'extern const u8 pal_slot[16];', 'extern const u8 pal_lut[16 * 256];',
          'extern const u8 spr_tiles[];', 'extern const u32 text_font[1024];',
          f'#define TEXT_PAL {slot[TEXT_XPAL] + 2}',
+         '/* plane A enemies: image = tile map w x h (plane_map, local tile + 1, 0 = empty) whose',
+         '   top-left is (ox, oy) from the call position; group = tiles loaded together */',
+         'typedef struct { s16 ox, oy; u8 w, h; u16 map; u8 pal, group; } PlaneImg;',
+         'typedef struct { u16 tile, ntiles; u8 img, nimg; } PlaneGroup;',
+         f'#define PLANE_NIMG {len(pimg)}', f'#define PLANE_MAX_TILES {max(g[1] for g in pgroups)}',
+         f'extern const PlaneImg plane_img[{len(pimg)}];', f'extern const PlaneGroup plane_group[{len(pgroups)}];',
+         f'extern const u16 plane_map[{len(pmaps)}];', f'extern const u32 plane_tiles[{len(pt) // 4}];',
          '#endif', '']
     open(os.path.join(out, 'spr.h'), 'w').write('\n'.join(H))
     open(os.path.join(out, 'spr_def.inc'), 'w').write(f'| generated by tools/convert_sprites.py\n'

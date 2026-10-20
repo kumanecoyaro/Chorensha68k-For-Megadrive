@@ -9,7 +9,7 @@ usage: uctrace.py game.elf ROM.bin [max_insns] [--frames N]
   * on an exception vector being taken or a bad access, prints the last PCs
     with symbol names
 """
-import sys, struct, bisect, subprocess, collections
+import os, sys, struct, bisect, subprocess, collections
 from unicorn import *
 from unicorn.m68k_const import *
 
@@ -88,7 +88,7 @@ def main():
         span = (sym[a], sym[b])
     vint = struct.unpack('>I', data[0x78:0x7C])[0]
     rte_addr = data.index(b'\x4e\x73', vint)     # rte of _vint
-    wait_lo = sym['x_bg_chip']; wait_hi = wait_lo + 0x80
+    wait_lo = sym.get('merge_cell', sym['x_bg_chip']); wait_hi = wait_lo + 0x80   # (chip queue full: waits for VBlank)
     vs_addr = sym['x_vsync']; vs_lo = vs_addr; vs_hi = sym.get('x_xsp_out', vs_addr + 0x40)
     counters = [sym['vblank_count'], sym['ORIG_VBLCNT']] if 'ORIG_VBLCNT' in sym else [sym['vblank_count']]
     state = {'n': 0, 'vbl': 0}
@@ -252,7 +252,7 @@ def main():
         def watch(uc, access, addr, size, value, ud):
             pc = uc.reg_read(UC_M68K_REG_PC)
             gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
-            if state.get('wn', 0) < 30:
+            if state.get('wn', 0) < int(os.environ.get('WATCH_N', 30)):
                 state['wn'] = state.get('wn', 0) + 1
                 print(f'watch write {addr:#x} = {value:#x} size {size} pc {name(pc)} gf {gf} last', [name(a) for a in list(last)[-6:]])
         uc.hook_add(UC_HOOK_MEM_WRITE, watch, begin=wa, end=wa + 1)
@@ -311,9 +311,9 @@ def main():
             v = [byf[f] for f in range(a, a + 200) if f in byf]
             if v:
                 print(f'game frames {a:5d}-{a + 199:5d}: avg {sum(v) // len(v):6d} max {max(v):6d} insns')
-    for v in ('stat_rec', 'stat_calls', 'stat_pieces', 'stat_out', 'xsp_misses', 'xsp_fail', 'comp_peak', 'comp_fail'):
+    for v in ('stat_rec', 'stat_calls', 'stat_pieces', 'stat_out', 'xsp_misses', 'xsp_fail', 'comp_peak', 'comp_fail', 'plane_frames'):
         if v in sym:
-            w = 2 if v.startswith(('xsp_', 'comp_')) else 4
+            w = 2 if v.startswith(('xsp_', 'comp_', 'plane_')) else 4
             print(v, int.from_bytes(uc.mem_read(sym[v], w), 'big'))
     if explc:
         h = collections.Counter(explc.values())

@@ -7,6 +7,7 @@
 long ocall(void *fn, long a1, long a2, long a3, long a4);
 long x_bg_load(void);
 long x_text_clear(void);
+void plane_upload(void);
 void bg_chips(void);
 
 u16 frame_count;
@@ -47,6 +48,7 @@ void vblank_work(void)
     if (frame_ready) {
         xsp_upload();
         bg_upload();
+        plane_upload();
         if (text_dirty) {
             hud_build();
             vdp_load_words(VRAM_WINDOW, hud_line, 32);
