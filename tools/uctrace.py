@@ -45,6 +45,7 @@ def main():
     fl = []
     chipcount = collections.Counter()
     pcghist = collections.Counter() if '--calls' in sys.argv else None
+    explc = collections.Counter() if '--explcount' in sys.argv else None   # expl4 draws per game frame
     # --fnlog A,B,..: log every call of these original functions (game frame, caller)
     fnlog = {0x10000 + int(v, 16) for v in sys.argv[sys.argv.index('--fnlog') + 1].split(',')} if '--fnlog' in sys.argv else set()
     padv = int(sys.argv[sys.argv.index('--pad') + 1], 16) if '--pad' in sys.argv else 0
@@ -98,6 +99,8 @@ def main():
                 state['t5'] = state.get('t5', 0) + 1
                 print('t056', name(addr), 'gf', gf, 'd3', uc.reg_read(UC_M68K_REG_D3), 'd5', uc.reg_read(UC_M68K_REG_D5),
                       'd6', hex(uc.reg_read(UC_M68K_REG_D6)), 'sp', hex(uc.reg_read(UC_M68K_REG_A7)))
+        if addr == sym.get('h_xobj_set') and explc is not None and 0xC0 <= uc.reg_read(UC_M68K_REG_D2) & 0xFFFF < 0x210:
+            explc[struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]] += 1
         if addr in fnlog:
             gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
             ret = struct.unpack('>I', uc.mem_read(uc.reg_read(UC_M68K_REG_A7), 4))[0]
@@ -275,6 +278,10 @@ def main():
         if v in sym:
             w = 2 if v.startswith('xsp_') else 4
             print(v, int.from_bytes(uc.mem_read(sym[v], w), 'big'))
+    if explc:
+        h = collections.Counter(explc.values())
+        print('expl4 explosions drawn per game frame (count: frames):', sorted(h.items()))
+        print('frames with >= 3:', sorted(f for f, n in explc.items() if n >= 3)[:60])
     if chipcount:
         print('BG chips per 50 game frames:', sorted(chipcount.items())[:40])
     if pcghist:
