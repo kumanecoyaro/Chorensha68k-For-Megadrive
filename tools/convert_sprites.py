@@ -336,6 +336,7 @@ def main(xsp, out):
          '   top-left is (ox, oy) from the call position; group = tiles loaded together */',
          'typedef struct { s16 ox, oy; u8 w, h; u16 map; u8 pal, group; } PlaneImg;',
          'typedef struct { u16 tile, ntiles; u8 img, nimg; } PlaneGroup;',
+         f'#define REF_EMPTY {[i for i in range(nref) if ref_start[i + 1] == ref_start[i]][0]:#x}   /* a ref without pieces */',
          f'#define PLANE_NIMG {len(pimg)}', f'#define PLANE_MAX_TILES {max(g[1] for g in pgroups)}',
          f'extern const PlaneImg plane_img[{len(pimg)}];', f'extern const PlaneGroup plane_group[{len(pgroups)}];',
          f'extern const u16 plane_map[{len(pmaps)}];', f'extern const u32 plane_tiles[{len(pt) // 4}];',

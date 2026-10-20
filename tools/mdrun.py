@@ -123,6 +123,9 @@ def main():
     ram = lib.retro_get_memory_data(2)
     if ram:
         open(prefix + '.ram', 'wb').write(C.string_at(ram, lib.retro_get_memory_size(2)))
+    vram = lib.retro_get_memory_data(3)             # RETRO_MEMORY_VIDEO_RAM (if the core has it)
+    if vram:
+        open(prefix + '.vram', 'wb').write(C.string_at(vram, lib.retro_get_memory_size(3)))
     if audio is not None:
         w = wave.open(prefix + '.wav', 'wb')
         w.setnchannels(2); w.setsampwidth(2); w.setframerate(44100)

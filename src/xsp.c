@@ -147,6 +147,38 @@ u16 cache_miss(u16 key)
     return slot_tile(s);
 }
 
+/* VRAM tile of (block, palette) for an effect drawn into plane A
+ * (src/plane.c), loading it if needed.  Effects get a share of the frame's
+ * tile uploads and of the 16-tile slots so they never starve the sprites
+ * (built after them); 0 = over budget, not drawn this frame. */
+#define FX_STAGE_MAX 1536
+#define FX_BSLOTS    12
+static u16 fx_stage, fx_bslots;
+u16 xsp_tile_for(u16 key)
+{
+    u16 h = hslot(key), n = spr_blocks[key >> 4].ntiles, t;
+    if (n > 4 && fx_bslots >= FX_BSLOTS)
+        return 0;
+    while (htab[h].key != KEY_EMPTY) {
+        if (htab[h].key == key) {
+            if (htab[h].stamp != xframe && n > 4)
+                fx_bslots++;
+            htab[h].stamp = xframe;
+            return htab[h].tile;
+        }
+        h = (h + 1) & (HASH_SIZE - 1);
+    }
+    if (fx_stage + n * 32 > FX_STAGE_MAX)
+        return 0;
+    t = cache_miss(key);
+    if (t) {
+        fx_stage += n * 32;
+        if (n > 4)
+            fx_bslots++;
+    }
+    return t;
+}
+
 /* ------------------------------------------------------------ sprite list */
 const s16 size_w[16] = { 8, 8, 8, 8, 16, 16, 16, 16, 24, 24, 24, 24, 32, 32, 32, 32 };
 const s16 size_h[16] = { 8, 16, 24, 32, 8, 16, 24, 32, 8, 16, 24, 32, 8, 16, 24, 32 };
@@ -202,6 +234,7 @@ void xsp_flush(void)
     }
     ntable = n;
     ncalls = 0;
+    fx_stage = fx_bslots = 0;
     pr_lo = 64; pr_hi = 0;
     table_ready = 1;
     xframe++;

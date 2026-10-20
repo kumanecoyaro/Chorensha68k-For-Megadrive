@@ -56,6 +56,7 @@ def main():
     explc = collections.Counter() if '--explcount' in sys.argv else None   # expl4 draws per game frame
     # --fnlog A,B,..: log every call of these original functions (game frame, caller)
     fnlog = {0x10000 + int(v, 16) for v in sys.argv[sys.argv.index('--fnlog') + 1].split(',')} if '--fnlog' in sys.argv else set()
+    bombs = [int(v) for v in sys.argv[sys.argv.index('--bomb') + 1].split(',')] if '--bomb' in sys.argv else []
     padv = int(sys.argv[sys.argv.index('--pad') + 1], 16) if '--pad' in sys.argv else 0
     for i, a in enumerate(sys.argv):
         if a == '--break':
@@ -231,6 +232,8 @@ def main():
             gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]     # B_4a0ca game frame
             if '--autofire' in sys.argv and (gf // 3) % 2:
                 p &= ~0x60
+            if bombs and any(b <= gf < b + 6 for b in bombs):     # --bomb F,F..: B pressed at these game frames
+                p |= 0x10
             if th:
                 v = 0x40 | (~p & 0x3F)
             else:
@@ -311,7 +314,7 @@ def main():
             v = [byf[f] for f in range(a, a + 200) if f in byf]
             if v:
                 print(f'game frames {a:5d}-{a + 199:5d}: avg {sum(v) // len(v):6d} max {max(v):6d} insns')
-    for v in ('stat_rec', 'stat_calls', 'stat_pieces', 'stat_out', 'xsp_misses', 'xsp_fail', 'comp_peak', 'comp_fail', 'plane_frames'):
+    for v in ('stat_rec', 'stat_calls', 'stat_pieces', 'stat_out', 'xsp_misses', 'xsp_fail', 'comp_peak', 'comp_fail', 'plane_frames', 'plane_fx'):
         if v in sym:
             w = 2 if v.startswith(('xsp_', 'comp_', 'plane_')) else 4
             print(v, int.from_bytes(uc.mem_read(sym[v], w), 'big'))
