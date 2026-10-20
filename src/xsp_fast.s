@@ -27,8 +27,9 @@
     .set    PARTICLE_HI, 0xAA8
     .set    EFFECT_PR, 0x31                 | effects: below the enemies ($34)
     .set    EXPL4_LO, 0x0C0                 | expl4 (the enemy explosions, one sprite per
-    .set    EXPL4_HI, 0x210                 | PCG): every other PCG of each frame is drawn
-    .set    FX_MAX, 24                      | at most this many effect sprites
+    .set    EXPL4_HI, 0x210                 | PCG): all PCGs while they fit the explosion's
+                                            | share of FX_MAX, else every other one
+    .set    FX_MAX, 28                      | at most this many effect sprites
     .set    DEBRIS_LO, 0x0B4                | debris.sp (particles): not drawn
     .set    DEBRIS_HI, 0x104
 
@@ -103,8 +104,9 @@ h_xsp_set:
 | but the text and the bomb ($3F; the priorities in use stay within $31-$3F
 | so the list scan in xsp_build stays short);
 | explosions (refs EFFECT_LO..EFFECT_HI) behind everything else and FX_MAX
-| sprites at most, expl4 with every other PCG only (every explosion is shown,
-| each one with half the sprites); particles (sparks, debris,
+| sprites at most, shared evenly; an expl4 frame larger than its share is
+| drawn with every other PCG (every explosion is shown, the original look
+| while only a few are on screen); particles (sparks, debris,
 | debris.sp PCGs) are not drawn at all,
 | so they no longer push the player, enemies and bullets out of the sprite
 | table (or eat the frame time).
@@ -168,8 +170,8 @@ xsp_build:
     cmp.w   #MAX_HW, %d1
     bcc.s   4f
     move.w  %d1, hw_limit
-4:  lea     bhead, %a1                  | shared fairly: every explosion gets
-    moveq   #0, %d1                     | 2 * FX_MAX / count pieces (half drawn)
+4:  lea     bhead, %a1                  | shared fairly: every explosion gets FX_MAX /
+    moveq   #0, %d1                     | count sprites (2 * that many pieces, half drawn)
     move.b  0(%a1,%d0.w), %d1
     lea     call_next, %a1
     moveq   #0, %d2
@@ -291,7 +293,7 @@ xsp_build:
     bcs.s   29f
     cmp.w   #EXPL4_HI, %d2
     bcc.s   29f
-    or.w    #0x100, %d6                 | bit 8: draw every other piece
+    or.w    #0x100, %d6                 | bit 8: draw every other piece (if needed)
 29:
     add.w   %d2, %d2
     lea     ref_start, %a1
@@ -300,7 +302,14 @@ xsp_build:
     move.w  2(%a1,%d2.w), %d1
     sub.w   %d0, %d1
     beq     69f
-    cmp.w   fx_cap, %d1
+    btst    #8, %d6
+    beq.s   27f
+    move.w  fx_cap, %d5                 | share = fx_cap / 2 sprites
+    lsr.w   #1, %d5
+    cmp.w   %d5, %d1
+    bhi.s   27f
+    bclr    #8, %d6                     | fits: every piece
+27: cmp.w   fx_cap, %d1
     bls.s   28f
     move.w  fx_cap, %d1
 28: subq.w  #1, %d1
