@@ -18,10 +18,10 @@
 #include "vdp.h"
 #include "spr.h"
 
-#define CACHE_A_BASE  404           /* VRAM tile of the first 4-tile slot */
-#define CACHE_A_SLOTS 160
+#define CACHE_A_BASE  532           /* VRAM tile of the first 4-tile slot (after BG + composites) */
+#define CACHE_A_SLOTS 136
 #define CACHE_B_BASE  (CACHE_A_BASE + CACHE_A_SLOTS * 4)
-#define CACHE_B_SLOTS 30
+#define CACHE_B_SLOTS 28            /* (ends at tile 1524, plane A at $C000 = tile 1536) */
 #define NSLOT (CACHE_A_SLOTS + CACHE_B_SLOTS)
 #define HASH_SIZE 512                   /* open addressing, key = block << 4 | palette */
 #define KEY_EMPTY 0xFFFF

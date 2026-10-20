@@ -45,6 +45,14 @@ def main():
     fl = []
     chipcount = collections.Counter()
     pcghist = collections.Counter() if '--calls' in sys.argv else None
+    pcgspan = {}
+    bglog = int(sys.argv[sys.argv.index('--bglog') + 1]) if '--bglog' in sys.argv else 0   # BG scroll every N frames + chip draws
+    bglog_map = 0
+    if bglog:
+        for ln in open('build/gen/orig.h'):
+            if 'ORIG_BLOB' in ln and '#define' in ln:
+                bglog_map = int(ln.split()[2], 16)
+    drawlog = [int(v) for v in sys.argv[sys.argv.index('--drawlog') + 1].split(',')] if '--drawlog' in sys.argv else None
     explc = collections.Counter() if '--explcount' in sys.argv else None   # expl4 draws per game frame
     # --fnlog A,B,..: log every call of these original functions (game frame, caller)
     fnlog = {0x10000 + int(v, 16) for v in sys.argv[sys.argv.index('--fnlog') + 1].split(',')} if '--fnlog' in sys.argv else set()
@@ -101,6 +109,32 @@ def main():
                       'd6', hex(uc.reg_read(UC_M68K_REG_D6)), 'sp', hex(uc.reg_read(UC_M68K_REG_A7)))
         if addr == sym.get('h_xobj_set') and explc is not None and 0xC0 <= uc.reg_read(UC_M68K_REG_D2) & 0xFFFF < 0x210:
             explc[struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]] += 1
+        if bglog and addr == sym.get('bg_scroll'):
+            gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
+            if gf % bglog == 0:
+                a = struct.unpack('>iiii', uc.mem_read(uc.reg_read(UC_M68K_REG_A7) + 4, 16))
+                print(f'bgscroll gf {gf} x0 {a[0]} x1 {a[1]} y0 {a[2]} y1 {a[3]}')
+        if bglog and addr == 0x10000 + 0x55d8:          # fn_05574: map byte read (a1 = column, d0 = row address)
+            gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
+            off = uc.reg_read(UC_M68K_REG_D0) - bglog_map
+            col = uc.reg_read(UC_M68K_REG_A1) & 0xFFFF
+            if col == 0:
+                print(f'bgrow gf {gf} layer {off >> 13} row {(off & 0x1fff) >> 3}')
+        if bglog and addr == sym.get('x_bg_chip'):
+            gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
+            a = struct.unpack('>iiiii', uc.mem_read(uc.reg_read(UC_M68K_REG_A7) + 4, 20))
+            print(f'bgchip gf {gf} chip {(a[1] - 0xFF0000) & 0xffffff:#x} layer {a[2]} x {a[3]} y {a[4]}')
+        if drawlog and addr in (sym.get('h_xsp_set'), sym.get('h_xobj_set')):
+            gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
+            if drawlog[0] <= gf <= drawlog[1]:
+                sp = uc.reg_read(UC_M68K_REG_A7)
+                ret = struct.unpack('>I', uc.mem_read(sp, 4))[0]
+                if sym.get('h_xsp_set_obj', 0) <= ret < sym.get('h_xsp_set', 0):
+                    ret = struct.unpack('>I', uc.mem_read(sp + 16, 4))[0]
+                r = [uc.reg_read(x) & 0xFFFF for x in (UC_M68K_REG_D0, UC_M68K_REG_D1, UC_M68K_REG_D2, UC_M68K_REG_D3)]
+                r = [v - 0x10000 if v & 0x8000 else v for v in r[:2]] + r[2:]
+                print(f'draw gf {gf} {fnname(ret - 0x10000)} {"pcg" if addr == sym.get("h_xsp_set") else "ref"} '
+                      f'x {r[0] / 64:.1f} y {r[1] / 64:.1f} id {r[2]:#x} info {r[3]:#06x}')
         if addr in fnlog:
             gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
             ret = struct.unpack('>I', uc.mem_read(uc.reg_read(UC_M68K_REG_A7), 4))[0]
@@ -111,7 +145,10 @@ def main():
             if sym.get('h_xsp_set_obj', 0) <= ret < sym.get('h_xsp_set', 0):   # via xsp_set_obj
                 ret = struct.unpack('>I', uc.mem_read(sp + 16, 4))[0]
             kind = 'pcg' if addr == sym.get('h_xsp_set') else 'ref'
-            pcghist[(fnname(ret - 0x10000), kind, uc.reg_read(UC_M68K_REG_D2) & 0xFFFF)] += 1
+            k = (fnname(ret - 0x10000), kind, uc.reg_read(UC_M68K_REG_D2) & 0xFFFF)
+            pcghist[k] += 1
+            gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
+            sp_ = pcgspan.setdefault(k, [gf, gf]); sp_[1] = gf
         if span:
             if addr == span[0]:
                 state['span0'] = state['n']
@@ -274,9 +311,9 @@ def main():
             v = [byf[f] for f in range(a, a + 200) if f in byf]
             if v:
                 print(f'game frames {a:5d}-{a + 199:5d}: avg {sum(v) // len(v):6d} max {max(v):6d} insns')
-    for v in ('stat_rec', 'stat_calls', 'stat_pieces', 'stat_out', 'xsp_misses', 'xsp_fail'):
+    for v in ('stat_rec', 'stat_calls', 'stat_pieces', 'stat_out', 'xsp_misses', 'xsp_fail', 'comp_peak', 'comp_fail'):
         if v in sym:
-            w = 2 if v.startswith('xsp_') else 4
+            w = 2 if v.startswith(('xsp_', 'comp_')) else 4
             print(v, int.from_bytes(uc.mem_read(sym[v], w), 'big'))
     if explc:
         h = collections.Counter(explc.values())
@@ -293,7 +330,8 @@ def main():
         if '--calls-dump' in sys.argv:
             with open(sys.argv[sys.argv.index('--calls-dump') + 1], 'w') as f:
                 for (fn, k, v), c in sorted(pcghist.items()):
-                    f.write(f'{fn} {k} {v:#x} {c}\n')
+                    a, b = pcgspan[(fn, k, v)]
+                    f.write(f'{fn} {k} {v:#x} {c} {a} {b}\n')
     if spans:
         spans.sort()
         print('biggest span:', state['spanhist'].most_common(12))

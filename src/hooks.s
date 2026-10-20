@@ -18,6 +18,14 @@ h_alloc_none:
     suba.l  %a0, %a0
     rts
 
+| ---- fn_05574 (BG full redraw, hooked by x_bg_full): its first two
+| instructions (the 6 bytes replaced by the hook jump), then the rest
+    .globl  orig_05574
+orig_05574:
+    subq.l  #8, %sp
+    movem.l %d3-%d7/%a3-%a6, -(%sp)
+    jmp     0x10000 + 0x557a
+
 | ---- C -> original code.  The original (XC compiled) code may clobber
 | d0-d2/a0-a2; gcc expects d2-d7/a2-a6 preserved.
 | long ocall(void *fn, long a1, long a2, long a3, long a4)

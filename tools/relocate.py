@@ -85,6 +85,7 @@ HOOKS = [
     (0x051b8, 'x_pal_load', 'c'),
     # BG: file loading and graphic-VRAM chip drawing
     (0x053ba, 'x_bg_load', 'c'),
+    (0x05574, 'x_bg_full', 'c'),        # full redraw (src/hooks.s orig_05574 runs the original)
     (0x301f6, 'x_bg_chip', 'c'),
     (0x303a2, 'x_bg_chip', 'c'),
     # text VRAM (the number / string printers above it stay original)
@@ -125,6 +126,9 @@ def patches():
         (0x0604a, '3f00', '3700', 'player y limit (cmp.w #$3f00,d1)'),
         (0x06052, '3f00', '3700', 'player y limit (move.w #$3f00,B_4cca0)'),
         (0x0701c, '5279', '4e714e714e71', 'stage 1 repeats (addq.w #1,abs.l: operand already relocated)'),
+        # fn_056ae skips a chip equal to the one already in the page cell; with
+        # both layers on one plane (src/bg.c) the far chip under it may differ
+        (0x057f0, '6774', '4e71', 'BG: always draw the chip (beq.b L05866 -> nop)'),
     ]
 
 def main(xpath, lst, xspdir, out):
