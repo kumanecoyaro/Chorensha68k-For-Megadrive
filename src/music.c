@@ -549,9 +549,8 @@ static void step(MCh *c)
 
 static void tick(void)
 {
-    u8 i;
-    for (i = 0; i < NCH; i++) {
-        MCh *c = &ch[i];
+    MCh *c;
+    for (c = ch; c < ch + NCH; c++) {   /* (a pointer: no multiply per channel) */
         if (c->wait)                    /* (step's common case, inlined) */
             c->wait--;
         else
@@ -657,9 +656,8 @@ void music_update(void)
         }
     }
     {
-        u8 i;
-        for (i = 0; i < NCH; i++) {
-            MCh *c = &ch[i];
+        MCh *c;
+        for (c = ch; c < ch + NCH; c++) {
             if (!c->dirty)
                 continue;
             if (c->dirty & 1)

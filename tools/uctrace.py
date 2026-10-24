@@ -46,6 +46,9 @@ def main():
     profr = [int(v) for v in sys.argv[sys.argv.index('--profrange') + 1].split(',')] if '--profrange' in sys.argv else None
     frl = [int(v) for v in sys.argv[sys.argv.index('--framelog') + 1].split(',')] if '--framelog' in sys.argv else None
     fl = []
+    # --fncount FN: instructions per call of FN (incl. callees and interrupts)
+    fnc = [] if '--fncount' in sys.argv else None
+    fnc_pend = []
     missl = collections.Counter() if '--misslog' in sys.argv else None     # cache_miss calls per game frame and caller
     missk = collections.Counter()
     minsp = [0xFFFFFFFF, ''] if '--minsp' in sys.argv else None     # lowest stack pointer seen
@@ -90,13 +93,14 @@ def main():
     last = collections.deque(maxlen=64)
     sym = dict((n, a) for a, n in syms)
     span = None; spans = []
+    fnc_addr = sym.get(sys.argv[sys.argv.index('--fncount') + 1]) if '--fncount' in sys.argv else None
     if '--span' in sys.argv:
         a, b = sys.argv[sys.argv.index('--span') + 1].split(',')
         span = (sym[a], sym[b])
     vint = struct.unpack('>I', data[0x78:0x7C])[0]
     rte_addr = data.index(b'\x4e\x73', vint)     # rte of _vint
     wait_lo = sym.get('merge_cell', sym['x_bg_chip']); wait_hi = wait_lo + 0x80   # (chip queue full: waits for VBlank)
-    waits2 = [sym[k] for k in ('x_xsp_out0', 'x_wait', 'x_screen_clear') if k in sym]   # other frame_ready waits
+    waits2 = [sym[k] for k in ('x_xsp_out0', 'x_wait', 'x_screen_clear', 'x_xsp_out') if k in sym]   # other frame_ready waits
     vs_addr = sym['x_vsync']; vs_lo = vs_addr; vs_hi = sym.get('x_xsp_out', vs_addr + 0x40)
     counters = [sym['vblank_count'], sym['ORIG_VBLCNT']] if 'ORIG_VBLCNT' in sym else [sym['vblank_count']]
     state = {'n': 0, 'vbl': 0}
@@ -107,6 +111,13 @@ def main():
             uc.emu_stop()
             return
         last.append(addr)
+        if fnc is not None:
+            if addr == fnc_addr:
+                sp = uc.reg_read(UC_M68K_REG_A7)
+                fnc_pend.append((struct.unpack('>I', uc.mem_read(sp, 4))[0], sp + 4, state['n'], state.get('gf', 0)))
+            elif fnc_pend and addr == fnc_pend[-1][0] and uc.reg_read(UC_M68K_REG_A7) == fnc_pend[-1][1]:
+                ret, _, n0, gf0 = fnc_pend.pop()
+                fnc.append((gf0, state['n'] - n0))
         if minsp is not None:
             sp = uc.reg_read(UC_M68K_REG_A7)
             if 0xFF0000 <= sp < minsp[0]:
@@ -335,11 +346,20 @@ def main():
                 print(f'   {c:8d} {name(a)}')
         for n, c in byname.most_common(40):
             print(f'{c * 100 / tot:6.2f}% {n}' + (f' {c}' if '--abs' in sys.argv else ''))
+    if fnc is not None:
+        v = sorted(c for _, c in fnc)
+        print(f'fncount calls {len(v)} avg {sum(v) // max(1, len(v))} max {v[-1] if v else 0}',
+              'p50', v[len(v) // 2] if v else 0, 'p90', v[len(v) * 9 // 10] if v else 0)
+        print('largest', sorted(fnc, key=lambda t: -t[1])[:15])
     if missl is not None:
         a, b = [int(v) for v in sys.argv[sys.argv.index('--misslog') + 1].split(',')]
         for gf in range(a, b + 1):
             print('misses gf', gf, {k[1]: c for k, c in missl.items() if k[0] == gf})
         print('most missed keys', [(hex(k), c) for k, c in missk.most_common(30)])
+        if '--keys-dump' in sys.argv:
+            with open(sys.argv[sys.argv.index('--keys-dump') + 1], 'w') as f:
+                for k, c in missk.most_common():
+                    f.write(f'{k:#06x} {c}\n')
     if minsp is not None:
         print(f'lowest SP {minsp[0]:#x} at {minsp[1]} (bss end {sym.get("_ebss", 0):#x})')
     if fl:

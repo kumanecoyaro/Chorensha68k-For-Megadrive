@@ -31,6 +31,7 @@
                                             | share of FX_MAX, else every other one
     .set    ARC_LO, 0x087                   | ele_arc (the bomb's lightning, one sprite per
     .set    ARC_HI, 0x0B5                   | PCG): every other PCG, alternately by frame
+    .set    PL_MAX, 64                      | pl_ix entries (src/plane.c)
     .set    FX_MAX, 28                      | at most this many effect sprites
     .set    DEBRIS_LO, 0x0B4                | debris.sp (particles): not drawn
     .set    DEBRIS_HI, 0x104
@@ -40,7 +41,6 @@
 
 | ---- record a call: d0 x, d1 y, d2 id, d3 info.  Clobbers d1/a0/a1.
 record:
-    addq.l  #1, stat_rec
     move.l  %d4, -(%sp)
     move.w  ncalls, %d4
     cmp.w   #MAX_CALLS, %d4
@@ -76,26 +76,48 @@ h_xsp_set_obj:
     movem.l (%sp)+, %d1-%d3
     rts
 
-| xsp_set (the original clobbers d0/a0)
+| xsp_set (the original clobbers d0/a0): recorded here directly (record,
+| inlined: the bullets make up most calls)
 h_xsp_set:
     cmp.w   #0x4400, %d0
-    bcc.s   9f
+    bcc     9f
     cmp.w   #0x4400, %d1
-    bcc.s   9f
+    bcc     9f
     cmp.w   #NPCG, %d2
     bcc.s   8f
-    movem.l %d1-%d2/%a1, -(%sp)
-    move.w  %d3, %d1
-    and.w   #63, %d1
     cmp.w   #DEBRIS_LO, %d2             | debris.sp PCGs (particles): not drawn
     bcs.s   1f
     cmp.w   #DEBRIS_HI, %d2
-    bcs.s   7f
-1:  move.w  %d1, rec_pr
-    move.l  (%sp), %d1
-    or.w    #0x8000, %d2
-    bsr     record
-7:  movem.l (%sp)+, %d1-%d2/%a1
+    bcs.s   8f
+1:  movem.l %d4-%d5, -(%sp)
+    move.w  ncalls, %d4
+    cmp.w   #MAX_CALLS, %d4
+    bcc.s   7f
+    move.w  %d4, %d5
+    lsl.w   #3, %d5
+    lea     calls, %a0
+    add.w   %d5, %a0
+    move.w  %d0, (%a0)+
+    move.w  %d1, (%a0)+
+    move.w  %d2, %d5
+    or.w    #0x8000, %d5                | (a PCG, not a ref)
+    move.w  %d5, (%a0)+
+    move.w  %d3, (%a0)
+    move.w  %d3, %d5
+    and.w   #63, %d5                    | priority list
+    lea     bhead, %a0
+    move.b  0(%a0,%d5.w), %d0
+    move.b  %d4, 0(%a0,%d5.w)
+    lea     call_next, %a0
+    move.b  %d0, 0(%a0,%d4.w)
+    addq.w  #1, ncalls
+    cmp.w   pr_lo, %d5
+    bcc.s   2f
+    move.w  %d5, pr_lo
+2:  cmp.w   pr_hi, %d5
+    bls.s   7f
+    move.w  %d5, pr_hi
+7:  movem.l (%sp)+, %d4-%d5
 8:  moveq   #1, %d0
     rts
 9:  moveq   #0, %d0
@@ -114,7 +136,7 @@ h_xsp_set:
 | table (or eat the frame time).
 h_xobj_set:
     cmp.w   #NREF, %d2
-    bcc.s   9f
+    bcc     9f
     move.w  %d3, %d4                    | (the original clobbers d0-d4)
     and.w   #63, %d4
     cmp.w   #PLAYER_LO, %d2
@@ -128,12 +150,33 @@ h_xobj_set:
     cmp.w   #PARTICLE_HI, %d2
     bcc.s   8f
     cmp.w   #PARTICLE_LO, %d2
-    bcc.s   9f                          | particles are not drawn
+    bcc     9f                          | particles are not drawn
     cmp.w   #EFFECT_PR, %d4
     bls.s   8f
     moveq   #EFFECT_PR, %d4
 8:  move.w  %d4, rec_pr
-    bra     record
+    move.w  ncalls, %d4
+    bsr     record
+    cmp.w   ncalls, %d4                 | (not recorded: the list is full)
+    beq     9f
+    move.w  %d2, %d1                    | refs src/plane.c looks for: effects, the
+    sub.w   #0x0B6, %d1                 | crab and the boss -> pl_ix
+    cmp.w   #0x0BF - 0x0B6, %d1
+    bls.s   5f
+    move.w  %d2, %d1
+    sub.w   #0xAA9, %d1
+    cmp.w   #0xAAE - 0xAA9, %d1
+    bls.s   5f
+    move.w  %d2, %d1
+    sub.w   #0xB1E, %d1
+    cmp.w   #0xB29 - 0xB1E, %d1
+    bhi     9f
+5:  move.w  pl_n, %d1
+    cmp.w   #PL_MAX, %d1
+    bcc     9f
+    lea     pl_ix, %a0
+    move.b  %d4, 0(%a0,%d1.w)
+    addq.w  #1, pl_n
 9:  rts
 
 | void xsp_call(s16 x, s16 y, u16 id, u16 info) for C (text cells)
@@ -453,8 +496,10 @@ lookup_slow:
     .section .note.GNU-stack,"",%progbits
 
     .bss
-    .globl  stat_pieces, stat_calls, stat_out, stat_rec
+    .globl  stat_pieces, stat_calls, stat_out, stat_rec, pl_ix, pl_n
 rec_pr:      .word 0
+pl_n:        .word 0                    | calls src/plane.c looks at: count, indices
+pl_ix:       .space 64
 hw_limit:    .word 0
 fx_cap:      .word 0
     .balign 2

@@ -106,8 +106,11 @@ void input_poll(void)
 /* ------------------------------------------------------------------ frame */
 extern volatile u8 frame_ready;
 
-/* fn_2cbda: wait for the vsync after the last sprite flush (the VBlank
- * interrupt shows the frame and clears frame_ready) */
+/* fn_2cbda: the original waits for the vsync after the last sprite output.
+ * Here the wait is in x_xsp_out, just before the next frame's sprites are
+ * built: the game logic of a frame runs while the last one waits for its
+ * VBlank, so a frame slightly over 1/60 s no longer costs a whole frame
+ * (30 fps) but only what it overruns. */
 #ifdef FRAME_PROBE
 u16 probe[32][4];               /* per frame: line stamps at vsync end, xsp_out, after flush */
 u8 probe_n;
@@ -128,8 +131,7 @@ long x_vsync(long n)
 #ifdef TEST_MUTEKI
     OW(0x4a104) = 1;                /* original debug option: no death (the title resets it) */
 #endif
-    while (frame_ready)
-        waited = 1;
+    waited = frame_ready;
     PROBE(0);
     return waited;
 }
@@ -139,6 +141,8 @@ long x_xsp_out(long p)
 {
     const volatile s32 *s = (const volatile s32 *)p;
     PROBE(1);
+    while (frame_ready)             /* the last frame is still waiting for its VBlank */
+        ;
     xsp_flush();
     PROBE(2);
 #ifdef FRAME_PROBE

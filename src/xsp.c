@@ -52,6 +52,8 @@ u16 xsp_misses, xsp_fail;
 
 static u8 stage[STAGE_BYTES] __attribute__((aligned(4)));
 static u16 stage_len;
+#define ROM_BYTES 4096              /* tiles DMAed from ROM per frame (VBlank time) */
+static u16 rom_len;
 static Upload up[MAX_UP];
 static u8 nup;
 
@@ -105,9 +107,20 @@ u16 cache_miss(u16 key)
     const u8 *src, *lut;
     u8 *dst;
     HEnt *e;
+    s16 rom = -1;                           /* pre-converted copy in ROM: pre_tiles tile */
     xsp_misses++;
     n = b->ntiles;
-    if (stage_len + n * 32 > STAGE_BYTES || nup >= MAX_UP) {
+    {                                       /* (convert_sprites.py) */
+        const u16 *keys = mesh ? mesh_keys : pre_keys;
+        u16 lo = 0, nk = mesh ? MESH_NKEYS : PRE_NKEYS, hi = nk, k = (block << 4) | pal;
+        while (lo < hi) {
+            u16 m = (lo + hi) >> 1;
+            if (keys[m] < k) lo = m + 1; else hi = m;
+        }
+        if (lo < nk && keys[lo] == k)
+            rom = (mesh ? mesh_off : pre_off)[lo];
+    }
+    if (nup >= MAX_UP || (rom >= 0 ? rom_len + n * 32 > ROM_BYTES : stage_len + n * 32 > STAGE_BYTES)) {
         xsp_fail++;
         return 0;
     }
@@ -140,19 +153,13 @@ u16 cache_miss(u16 key)
     e->slot = s;
     slot_ent[s] = h;
 
-    {                                       /* the bomb's blocks: pre-converted in ROM */
-        u16 lo = 0, hi = PRE_NKEYS, k = (block << 4) | pal;
-        while (lo < hi) {
-            u16 m = (lo + hi) >> 1;
-            if (pre_keys[m] < k) lo = m + 1; else hi = m;
-        }
-        if (lo < PRE_NKEYS && pre_keys[lo] == k) {
-            up[nup].vram = e->tile * 32;
-            up[nup].off = 0x8000 | pre_off[mesh ? PRE_NKEYS + lo : lo];
-            up[nup].words = n * 16;
-            nup++;
-            return slot_tile(s);
-        }
+    if (rom >= 0) {                         /* DMA straight from ROM */
+        up[nup].vram = e->tile * 32;
+        up[nup].off = 0x8000 | rom;
+        up[nup].words = n * 16;
+        nup++;
+        rom_len += n * 32;
+        return slot_tile(s);
     }
     src = spr_tiles + b->tile * 32;
     lut = pal_lut + ((u16)pal << 8);
@@ -333,6 +340,7 @@ void xsp_call(s16 x, s16 y, u16 id, u16 info);
 
 /* end of frame: front (high priority) first, keep the first 64 */
 void plane_frame(void);
+extern u16 pl_n;
 
 void xsp_flush(void)
 {
@@ -346,6 +354,7 @@ void xsp_flush(void)
     }
     ntable = n;
     ncalls = 0;
+    pl_n = 0;
     fx_stage = fx_bslots = 0;
     base_valid = 0;
     pr_lo = 64; pr_hi = 0;
@@ -366,6 +375,7 @@ void xsp_upload(void)
             vdp_dma_vram(up[i].vram, stage + up[i].off, up[i].words);
     nup = 0;
     stage_len = 0;
+    rom_len = 0;
     if (table_ready) {
         vdp_dma_vram(VRAM_SPRITES, table, ntable * 4);
         table_ready = 0;

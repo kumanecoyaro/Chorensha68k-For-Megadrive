@@ -41,6 +41,8 @@
 typedef struct { s16 x, y; u16 id, info; } Call;
 extern Call calls[];
 extern u16 ncalls;
+extern u8 pl_ix[];                      /* calls of the refs looked for here (xsp_fast.s) */
+extern u16 pl_n;
 extern const s16 size_w[16], size_h[16];
 u16 xsp_tile_for(u16 block, u8 pal, u8 mesh, u16 *key);
 void xsp_touch(u16 key);
@@ -197,46 +199,61 @@ static void drop_image_calls(s8 img, Call *c)
 /* image columns fully on screen (plane A is as wide as the screen) */
 static u32 visible_cols(const PlaneImg *im, s16 h)
 {
-    u32 m = 0;
-    u8 c;
-    for (c = 0; c < im->w; c++, h += 8)
-        if (h >= 0 && h <= 256 - 8)
-            m |= 1UL << c;
-    return m;
+    s16 lo = (7 - h) >> 3, hi = (256 - 8 - h) >> 3;    /* h + 8c in 0..248 */
+    if (lo < 0) lo = 0;
+    if (hi > im->w - 1) hi = im->w - 1;
+    if (lo > hi)
+        return 0;
+    return (hi >= 31 ? 0xFFFFFFFFUL : (2UL << hi) - 1) & ~((1UL << lo) - 1);
 }
 
+/* the window rows holding something cleared */
+static void clear_win_rows(void)
+{
+    u32 nz = win_nz;
+    u32 *w = (u32 *)win[0];
+    for (; nz; nz >>= 1, w += 16)
+        if (nz & 1) {
+            w[0] = 0; w[1] = 0; w[2] = 0; w[3] = 0; w[4] = 0; w[5] = 0; w[6] = 0; w[7] = 0;
+            w[8] = 0; w[9] = 0; w[10] = 0; w[11] = 0; w[12] = 0; w[13] = 0; w[14] = 0; w[15] = 0;
+        }
+    win_nz = 0;
+}
 /* image rows into plane rows 0..h-1 (built in win[]), the other rows that
  * hold something cleared */
 static u16 zero_row[32];
 static void write_static(s8 img, u32 cols)
 {
-    u8 r, c, h = 0, pr;
-    for (r = 0; r < WROWS; r++)
-        for (c = 0; c < 32; c++)
-            win[r][c] = 0;
-    win_nz = 0;
+    u8 r, c, h = 0, pr, half;
+    u32 rows;
+    clear_win_rows();
     if (img >= 0) {
         const PlaneImg *im = &plane_img[img];
         const u16 *m = plane_map + im->map;
         u16 attr = ((u16)im->pal << 13) + ENEMY_BASE - 1;
         h = im->h;
-        for (r = 0; r < h; r++)
-            for (c = 0; c < im->w; c++, m++)
-                if (*m && (cols >> c & 1))
-                    win[r][c] = attr + *m;
+        for (r = 0; r < h; r++) {
+            u16 *d = win[r];
+            u32 cm = cols;
+            for (c = 0; c < im->w; c++, m++, cm >>= 1)
+                *d++ = (*m && (cm & 1)) ? attr + *m : 0;
+        }
         win_nz = (1UL << h) - 1;        /* (cleared by the full path when it takes over) */
     }
+    /* rows to write: the image rows, and the other rows that hold something */
     wr_n = 0;
-    for (pr = 0; pr < 64; pr++) {
-        u32 bit = 1UL << (pr & 31), *v = &vram_nz[pr >> 5];
-        if (pr < h) {
-            wr_row[wr_n] = pr; wr_win[wr_n] = pr; wr_n++;
-            *v |= bit;
-        } else if (*v & bit) {
-            wr_row[wr_n] = pr; wr_win[wr_n] = 0xFF; wr_n++;
-            *v &= ~bit;
-        }
+    rows = win_nz;
+    for (half = 0; half < 2; half++) {
+        u32 v = vram_nz[half] | (half ? 0 : rows);
+        for (pr = half << 5; v; v >>= 1, pr++)
+            if (v & 1) {
+                wr_row[wr_n] = pr;
+                wr_win[wr_n] = pr < h ? pr : 0xFF;
+                wr_n++;
+            }
     }
+    vram_nz[0] = rows;
+    vram_nz[1] = 0;
 }
 
 #define FX_CALLS 64                     /* effect calls handled per frame */
@@ -277,14 +294,30 @@ void plane_frame(void)
     s8 img = -1;
     u16 i, fx = 0;
     u8 k;
-    Call *c = calls;
-    for (i = 0; i < ncalls; i++, c++) {
-        if (c->id == REF_BOSS) {
+    Call *c;
+    /* the calls xobj_set noted (src/xsp_fast.s): the large enemy, the effects */
+    for (k = 0; k < pl_n; k++) {
+        u16 id;
+        i = pl_ix[k];
+        c = &calls[i];
+        id = c->id;
+        if ((u16)(id - 0xB6) <= 0xBF - 0xB6 || (u16)(id - 0xAA9) <= 0xAAE - 0xAA9) {
+            if (is_effect(c)) {
+                if (fx < FX_CALLS)
+                    fx_ix[fx] = i;
+                fx++;
+                nbomb += (c->info & 63) == 0x3F;
+            }
+            continue;
+        }
+        if ((u16)(id - REF_CRAB) > REF_BOSS - REF_CRAB || img == 2)
+            continue;
+        if (id == REF_BOSS) {
             best = i; img = 2;
             boss_seen = 1;
-            break;
+            continue;
         }
-        if (c->id == REF_CRAB + 2 && i >= 2 && c[-2].id == REF_CRAB && c[-1].id == REF_CRAB + 1
+        if (id == REF_CRAB + 2 && i >= 2 && c[-2].id == REF_CRAB && c[-1].id == REF_CRAB + 1
             && c[-2].y == c->y && c[-1].y == c->y) {
             s16 d = (c->x >> 6) - ax, e = (c->y >> 6) - ay;
             d = (d < 0 ? -d : d) + (e < 0 ? -e : e);
@@ -294,6 +327,8 @@ void plane_frame(void)
             }
         }
     }
+    if (fx > FX_CALLS)
+        fx = FX_CALLS;                  /* (the rest stay sprites) */
     if (best >= 0) {
         u8 g = plane_img[img].group;
         if (loaded != g) {
@@ -321,15 +356,6 @@ void plane_frame(void)
 
     /* no effect now or last frame: the image alone, written into plane rows
      * 0..h-1 only when it or its edge columns change (plane A scrolls it) */
-    for (i = 0, c = calls; i < ncalls; i++, c++)
-        if (is_effect(c)) {
-            if (fx < FX_CALLS)
-                fx_ix[fx] = i;
-            fx++;
-            nbomb += (c->info & 63) == 0x3F;
-        }
-    if (fx > FX_CALLS)
-        fx = FX_CALLS;                  /* (the rest stay sprites) */
     if (!fx && !was_fx) {
         u32 cols = img >= 0 ? visible_cols(&plane_img[img], hs) : 0;
         wr_n = 0;
@@ -352,15 +378,7 @@ void plane_frame(void)
 
     /* the visible rows */
     top = vs >> 3;
-    for (k = 0; k < WROWS; k++)
-        if (win_nz >> k & 1) {
-            u32 *w = (u32 *)win[k];
-            for (i = 0; i < 16; i += 4) {
-                w[0] = 0; w[1] = 0; w[2] = 0; w[3] = 0;
-                w += 4;
-            }
-        }
-    win_nz = 0;
+    clear_win_rows();
     if (img >= 0) {
         put_image(img, top);
         drop_image_calls(img, &calls[best]);

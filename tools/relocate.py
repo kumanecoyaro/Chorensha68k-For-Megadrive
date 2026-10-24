@@ -134,6 +134,14 @@ def patches():
         (0x057f0, '6774', '4e71', 'BG: always draw the chip (beq.b L05866 -> nop)'),
         # L03e60: "exit" stays on the title (bne.b L03f5c -> bra.b)
         (0x03f46, '6614', '6014', 'title: exit does not quit'),
+        # the bomb's circles (and the player's hit flash): one frame each, no
+        # animation, and not the big expl2 frames $B8 / $B9 (96 / 128 px): no new
+        # tiles to load every few frames.  D_48ddc: expl3 ring frame ($BA + n)
+        # by age (fn_10154), D_48dfa: expl2 frame ($B5 + n) by age (fn_0ff3a)
+        (0x48ddc, '000102030405000000000101010102020202030303030404040405050505', '02' * 30,
+         'circles: expl3 ring = $BC always'),
+        (0x48dfa, '000001010202030304040403030302020201010100000000', '02' * 24,
+         'circles: expl2 = $B7 always (no $B8 / $B9)'),
     ]
 
 def main(xpath, lst, xspdir, out):

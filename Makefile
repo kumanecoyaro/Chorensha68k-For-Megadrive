@@ -36,7 +36,7 @@ $(BUILD)/assets/XSP_DAT/map.bg0: $(BUILD)/disk/CRS68K/SZ2.X
 $(GEN)/assets.c $(GEN)/assets.h: $(BUILD)/assets/XSP_DAT/map.bg0 tools/convert_assets.py tools/x68gfx.py
 	$(PY) tools/convert_assets.py $(BUILD)/disk/CRS68K/SZ2.X $(BUILD)/assets/XSP_DAT $(GEN)
 
-$(GEN)/spr.c $(GEN)/spr.h $(GEN)/spr_tiles.bin $(GEN)/spr_def.inc: $(BUILD)/assets/XSP_DAT/map.bg0 tools/convert_sprites.py tools/x68gfx.py
+$(GEN)/spr.c $(GEN)/spr.h $(GEN)/spr_tiles.bin $(GEN)/spr_def.inc: $(BUILD)/assets/XSP_DAT/map.bg0 tools/convert_sprites.py tools/x68gfx.py tools/hot_keys.txt
 	$(PY) tools/convert_sprites.py $(BUILD)/assets/XSP_DAT $(GEN)
 
 $(GEN)/pcm.c $(GEN)/pcm.h $(GEN)/pcm.bin: $(BUILD)/assets/XSP_DAT/map.bg0 tools/convert_pcm.py
