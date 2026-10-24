@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Headless Mega Drive test runner using a libretro core (e.g. Genesis Plus GX).
 
-usage: mdrun.py CORE.so ROM.bin FRAMES OUTPREFIX [--shot N,N,...] [--input SCRIPT] [--wav]
+usage: mdrun.py CORE.so ROM.bin FRAMES OUTPREFIX [--shot N,N,...] [--input SCRIPT] [--wav] [--dump N,N,...]
                  [--opt key=value]   (e.g. genesis_plus_gx_ym2612=nuked (ym2612))
 
 SCRIPT is a comma-separated list of  start-end:BUTTONS  entries, e.g.
@@ -36,7 +36,7 @@ STATE_CB = C.CFUNCTYPE(C.c_int16, C.c_uint, C.c_uint, C.c_uint, C.c_uint)
 
 def main():
     core, rom, frames, prefix = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
-    shots = set(); script = []; audio = None; opts = {}
+    shots = set(); dumps = set(); script = []; audio = None; opts = {}
     args = sys.argv[5:]
     while args:
         a = args.pop(0)
@@ -45,6 +45,8 @@ def main():
         elif a == '--opt':                     # core option key=value
             k, v = args.pop(0).split('=', 1)
             opts[k.encode()] = C.c_char_p(v.encode())
+        elif a == '--dump':                    # RAM / VRAM (if the core has it) at these frames
+            dumps = {int(v) for v in args.pop(0).split(',')}
         elif a == '--wav':
             audio = bytearray()
         elif a == '--input':
@@ -111,21 +113,27 @@ def main():
     gi = GameInfo(os.path.abspath(rom).encode(), C.cast(buf, C.c_void_p), len(data), None)
     if not lib.retro_load_game(C.byref(gi)):
         sys.exit('load failed')
+    lib.retro_get_memory_data.restype = C.c_void_p
+    lib.retro_get_memory_size.restype = C.c_size_t
+
+    def dump(name):
+        ram = lib.retro_get_memory_data(2)
+        if ram:
+            open(name + '.ram', 'wb').write(C.string_at(ram, lib.retro_get_memory_size(2)))
+        vram = lib.retro_get_memory_data(3)         # RETRO_MEMORY_VIDEO_RAM (if the core has it)
+        if vram:
+            open(name + '.vram', 'wb').write(C.string_at(vram, lib.retro_get_memory_size(3)))
+
     for f in range(frames):
         state['frame'] = f
         lib.retro_run()
         if f in shots and state['img'] is not None:
             state['img'].save(f'{prefix}_{f:05d}.png')
+        if f in dumps:
+            dump(f'{prefix}_{f:05d}')
     if state['img'] is not None:
         state['img'].save(f'{prefix}_last.png')
-    lib.retro_get_memory_data.restype = C.c_void_p
-    lib.retro_get_memory_size.restype = C.c_size_t
-    ram = lib.retro_get_memory_data(2)
-    if ram:
-        open(prefix + '.ram', 'wb').write(C.string_at(ram, lib.retro_get_memory_size(2)))
-    vram = lib.retro_get_memory_data(3)             # RETRO_MEMORY_VIDEO_RAM (if the core has it)
-    if vram:
-        open(prefix + '.vram', 'wb').write(C.string_at(vram, lib.retro_get_memory_size(3)))
+    dump(prefix)
     if audio is not None:
         w = wave.open(prefix + '.wav', 'wb')
         w.setnchannels(2); w.setsampwidth(2); w.setframerate(44100)

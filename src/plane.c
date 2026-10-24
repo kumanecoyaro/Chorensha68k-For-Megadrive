@@ -63,8 +63,10 @@ u16 plane_frames, plane_fx;             /* (stats for tools/uctrace.py) */
 static u8 pal_of(const Call *c) { return (c->info >> 8) & 15; }
 
 /* the player's bomb (expl2 / expl3 / flare refs at the very front, $3F),
- * the large expl2 frames ($B8 / $B9: the boss's death) and flares; the small
+ * the large expl2 frames ($B8 / $B9: the boss's death, once the boss has
+ * been seen; the crab's death puffs stay sprites) and flares; the small
  * expl2 frames enemies draw at their own priority stay sprites */
+static u8 boss_seen;
 static u8 is_effect(const Call *c)
 {
     u16 id = c->id;
@@ -74,7 +76,7 @@ static u8 is_effect(const Call *c)
     if (id >= 0xAA9 && id <= 0xAAE)
         return 1;
     if (id == 0xB8 || id == 0xB9)
-        return 1;
+        return boss_seen;
     return id >= 0xB6 && id <= 0xBF && (c->info & 63) == 0x3F;
 }
 
@@ -100,33 +102,45 @@ static void put_image(s8 img, s16 top)
                 put(c, r, top, attr + *m);
 }
 
-/* a ref into the plane cells (like the composite path of xsp_build) */
-static void put_ref(const Call *cl, s16 top)
+/* a ref into the plane cells (like the composite path of xsp_build): all
+ * of its pieces or none (0: left a sprite this frame; a part of an effect,
+ * cut along the 8 px cells, shows as hard-edged blocks) */
+#define REF_PIECES 48
+static u8 put_ref(const Call *cl, s16 top)
 {
-    u16 i = ref_start[cl->id], n = ref_start[cl->id + 1];
+    u16 i0 = ref_start[cl->id], n = ref_start[cl->id + 1], i;
     u8 objfl = (cl->info >> 14) & 3, opal = pal_of(cl);   /* bit 0 = H, bit 1 = V */
     s16 px = cl->x >> 6, py = cl->y >> 6;
-    for (; i < n; i++) {
-        const SprPiece *p = &ref_pieces[i];
-        u8 sz = p->size & 15, fl = ((p->size >> 4) & 3) ^ objfl, pal = (p->palx ^ opal) & 15;
-        s16 w = size_w[sz], h = size_h[sz], dx = p->dx, dy = p->dy, tw = w >> 3, th = h >> 3, tx, ty;
-        s16 c0, r0;
-        u16 t, attr;
-        if (objfl & 1) dx = -dx - 16 - w;
-        if (objfl & 2) dy = -dy - 16 - h;
-        c0 = (px + dx - hs + 4) >> 3;
-        r0 = (py + dy + vs + 4) >> 3;
-        if (r0 + th <= top || r0 >= top + WROWS)
-            continue;
-        t = xsp_tile_for((p->block << 4) | pal);
-        if (!t)
-            continue;
-        attr = ((u16)pal_slot[pal] << 13) | ((fl & 1) << 11) | ((fl & 2) << 11);
-        for (tx = 0; tx < tw; tx++)
-            for (ty = 0; ty < th; ty++)
-                put(c0 + ((fl & 1) ? tw - 1 - tx : tx), r0 + ((fl & 2) ? th - 1 - ty : ty), top,
-                    attr | (t + tx * th + ty));
-    }
+    u16 tile[REF_PIECES];
+    u8 pass;
+    if (n - i0 > REF_PIECES)
+        return 0;
+    for (pass = 0; pass < 2; pass++)
+        for (i = i0; i < n; i++) {
+            const SprPiece *p = &ref_pieces[i];
+            u8 sz = p->size & 15, fl = ((p->size >> 4) & 3) ^ objfl, pal = (p->palx ^ opal) & 15;
+            s16 w = size_w[sz], h = size_h[sz], dx = p->dx, dy = p->dy, tw = w >> 3, th = h >> 3, tx, ty;
+            s16 c0, r0;
+            u16 t, attr;
+            if (objfl & 1) dx = -dx - 16 - w;
+            if (objfl & 2) dy = -dy - 16 - h;
+            c0 = (px + dx - hs + 4) >> 3;
+            r0 = (py + dy + vs + 4) >> 3;
+            if (r0 + th <= top || r0 >= top + WROWS)
+                continue;
+            if (!pass) {
+                if (!(tile[i - i0] = xsp_tile_for((p->block << 4) | pal)))
+                    return 0;
+                continue;
+            }
+            t = tile[i - i0];
+            attr = ((u16)pal_slot[pal] << 13) | ((fl & 1) << 11) | ((fl & 2) << 11);
+            for (tx = 0; tx < tw; tx++)
+                for (ty = 0; ty < th; ty++)
+                    put(c0 + ((fl & 1) ? tw - 1 - tx : tx), r0 + ((fl & 2) ? th - 1 - ty : ty), top,
+                        attr | (t + tx * th + ty));
+        }
+    return 1;
 }
 
 /* the calls shown by the plane image are dropped (a flashing part stays a
@@ -198,6 +212,7 @@ void plane_frame(void)
     for (i = 0; i < ncalls; i++, c++) {
         if (c->id == REF_BOSS) {
             best = i; img = 2;
+            boss_seen = 1;
             break;
         }
         if (c->id == REF_CRAB + 2 && i >= 2 && c[-2].id == REF_CRAB && c[-1].id == REF_CRAB + 1
@@ -267,11 +282,12 @@ void plane_frame(void)
     }
     for (i = 0, c = calls; i < ncalls; i++, c++)
         if (is_effect(c)) {
-            put_ref(c, top);
+            fx++;
+            if (!put_ref(c, top))
+                continue;
 #ifndef PLANE_FX_DEBUG
             c->id = EMPTY_REF;
 #endif
-            fx++;
         }
     if (fx)
         plane_fx++;
@@ -300,6 +316,7 @@ void plane_reset(void)
     shown = -1;
     st_img = -1; st_cols = 0;           /* (the cleared plane: nothing written) */
     was_fx = 0;
+    boss_seen = 0;
 }
 
 /* DMA must not cross a 128 KB boundary of the source */
