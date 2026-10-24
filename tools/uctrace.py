@@ -42,7 +42,13 @@ def main():
     period = 20000
     brk = {}
     prof = collections.Counter() if '--profile' in sys.argv else None
+    # --profrange A,B: profile game frames A..B only; --framelog A,B: instructions per game frame
+    profr = [int(v) for v in sys.argv[sys.argv.index('--profrange') + 1].split(',')] if '--profrange' in sys.argv else None
+    frl = [int(v) for v in sys.argv[sys.argv.index('--framelog') + 1].split(',')] if '--framelog' in sys.argv else None
     fl = []
+    missl = collections.Counter() if '--misslog' in sys.argv else None     # cache_miss calls per game frame and caller
+    missk = collections.Counter()
+    minsp = [0xFFFFFFFF, ''] if '--minsp' in sys.argv else None     # lowest stack pointer seen
     chipcount = collections.Counter()
     pcghist = collections.Counter() if '--calls' in sys.argv else None
     pcgspan = {}
@@ -101,7 +107,11 @@ def main():
             uc.emu_stop()
             return
         last.append(addr)
-        if prof is not None:
+        if minsp is not None:
+            sp = uc.reg_read(UC_M68K_REG_A7)
+            if 0xFF0000 <= sp < minsp[0]:
+                minsp[0] = sp; minsp[1] = name(addr)
+        if prof is not None and (not profr or profr[0] <= state.get('gf', 0) <= profr[1]):
             prof[addr] += 1
         if '--t056' in sys.argv and addr in (0x156da, 0x1576c, 0x15862, 0x15644):   # TRACE056
             gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
@@ -137,6 +147,12 @@ def main():
                 r = [v - 0x10000 if v & 0x8000 else v for v in r[:2]] + r[2:]
                 print(f'draw gf {gf} {fnname(ret - 0x10000)} {"pcg" if addr == sym.get("h_xsp_set") else "ref"} '
                       f'x {r[0] / 64:.1f} y {r[1] / 64:.1f} id {r[2]:#x} info {r[3]:#06x}')
+        if missl is not None and addr == sym['cache_miss']:
+            sp = uc.reg_read(UC_M68K_REG_A7)
+            ret = struct.unpack('>I', uc.mem_read(sp, 4))[0]
+            key = struct.unpack('>I', uc.mem_read(sp + 4, 4))[0] & 0xFFFF
+            missl[(state.get('gf', 0), name(ret).split('+')[0])] += 1
+            missk[key] += 1
         if addr in fnlog:
             gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
             ret = struct.unpack('>I', uc.mem_read(uc.reg_read(UC_M68K_REG_A7), 4))[0]
@@ -177,7 +193,15 @@ def main():
                       'stack', uc.mem_read(sp, 40).hex())
         if addr == vs_addr:
             gf = struct.unpack('>H', uc.mem_read(0xFF0116, 2))[0]
+            if frl and 'stat_pp' in sym and frl[0] <= gf <= frl[1]:
+                v = [int.from_bytes(uc.mem_read(sym[k], 2), 'big') for k in ('stat_pp', 'stat_pr', 'stat_cells')]
+                print('plane stats gf', gf, 'pieces', v[0], 'refs', v[1], 'cells', v[2])
+                for k in ('stat_pp', 'stat_pr', 'stat_cells'):
+                    uc.mem_write(sym[k], b'\0\0')
             fl.append((gf, state['n'] - state.get('vs', 0) - state.get('wait', 0))); state['vs'] = state['n']; state['wait'] = 0
+            state['gf'] = gf
+            if frl and frl[0] <= gf <= frl[1]:
+                print(f'frame gf {gf} insns {fl[-1][1]} vbl {state["vbl"]}')
         if vs_lo <= addr < vs_hi:
             state['wait'] = state.get('wait', 0) + 1
         if addr in brk and brk[addr] > 0:
@@ -307,10 +331,17 @@ def main():
         if '--hot' in sys.argv:
             fn = sys.argv[sys.argv.index('--hot') + 1]
             hot = sorted(((c, a) for a, c in prof.items() if name(a).split('+')[0] == fn), reverse=True)
-            for c, a in hot[:40]:
+            for c, a in hot[:int(os.environ.get("HOT_N", 40))]:
                 print(f'   {c:8d} {name(a)}')
         for n, c in byname.most_common(40):
-            print(f'{c * 100 / tot:6.2f}% {n}')
+            print(f'{c * 100 / tot:6.2f}% {n}' + (f' {c}' if '--abs' in sys.argv else ''))
+    if missl is not None:
+        a, b = [int(v) for v in sys.argv[sys.argv.index('--misslog') + 1].split(',')]
+        for gf in range(a, b + 1):
+            print('misses gf', gf, {k[1]: c for k, c in missl.items() if k[0] == gf})
+        print('most missed keys', [(hex(k), c) for k, c in missk.most_common(30)])
+    if minsp is not None:
+        print(f'lowest SP {minsp[0]:#x} at {minsp[1]} (bss end {sym.get("_ebss", 0):#x})')
     if fl:
         byf = dict(fl[1:])
         for a in range(0, max(byf) + 1, 200):

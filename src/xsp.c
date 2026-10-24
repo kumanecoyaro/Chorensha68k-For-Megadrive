@@ -50,7 +50,7 @@ static u16 slot_ent[NSLOT];             /* hash entry holding the slot, NO_ENTRY
 static u16 clock_a, clock_b;
 u16 xsp_misses, xsp_fail;
 
-static u8 stage[STAGE_BYTES];
+static u8 stage[STAGE_BYTES] __attribute__((aligned(4)));
 static u16 stage_len;
 static Upload up[MAX_UP];
 static u8 nup;
@@ -88,11 +88,19 @@ static void hash_remove(u16 h)
     htab[h].key = KEY_EMPTY;
 }
 
+/* meshed copies of effect blocks (xsp_tile_for): keys MESH_KEY + index * 16
+ * + palette, above every sprite key (block < 2788: key < $AE50) */
+#define MESH_KEY  0xB000
+#define MESH_MAX  64                    /* open addressing by block: block + 1, 0 = free */
+static u16 mesh_blk[MESH_MAX];
+
 /* called by xsp_fast.s when (block, palette) is not in VRAM */
 u16 cache_miss(u16 key)
 {
     u16 block = key >> 4, s, n, i, start, *clk, h;
-    u8 pal = key & 15;
+    u8 pal = key & 15, mesh = key >= MESH_KEY;
+    if (mesh)
+        block = mesh_blk[(key - MESH_KEY) >> 4] - 1;
     const SprBlock *b = &spr_blocks[block];
     const u8 *src, *lut;
     u8 *dst;
@@ -132,11 +140,27 @@ u16 cache_miss(u16 key)
     e->slot = s;
     slot_ent[s] = h;
 
+    {                                       /* the bomb's blocks: pre-converted in ROM */
+        u16 lo = 0, hi = PRE_NKEYS, k = (block << 4) | pal;
+        while (lo < hi) {
+            u16 m = (lo + hi) >> 1;
+            if (pre_keys[m] < k) lo = m + 1; else hi = m;
+        }
+        if (lo < PRE_NKEYS && pre_keys[lo] == k) {
+            up[nup].vram = e->tile * 32;
+            up[nup].off = 0x8000 | pre_off[mesh ? PRE_NKEYS + lo : lo];
+            up[nup].words = n * 16;
+            nup++;
+            return slot_tile(s);
+        }
+    }
     src = spr_tiles + b->tile * 32;
     lut = pal_lut + ((u16)pal << 8);
     dst = stage + stage_len;
-    for (i = n * 8; i; i--) {
+    for (i = n * 8; i; i--) {               /* a byte: 2 pixels, a long: a tile row */
         dst[0] = lut[src[0]]; dst[1] = lut[src[1]]; dst[2] = lut[src[2]]; dst[3] = lut[src[3]];
+        if (mesh)                           /* checkerboard: every other pixel, offset by a row */
+            *(u32 *)dst &= i & 1 ? 0x0F0F0F0FUL : 0xF0F0F0F0UL;
         dst += 4; src += 4;
     }
     up[nup].vram = e->tile * 32;
@@ -148,17 +172,31 @@ u16 cache_miss(u16 key)
 }
 
 /* VRAM tile of (block, palette) for an effect drawn into plane A
- * (src/plane.c), loading it if needed.  Effects get a share of the frame's
- * tile uploads and of the 16-tile slots so they never starve the sprites
- * (built after them); 0 = over budget, not drawn this frame. */
+ * (src/plane.c), loading it if needed; mesh: a checkerboard copy (half the
+ * pixels: the X68000's translucent bomb).  Effects get a share of the
+ * frame's tile uploads and of the 16-tile slots so they never starve the
+ * sprites (built after them); 0 = over budget, not drawn this frame. */
 #define FX_STAGE_MAX 1536
+#ifndef FX_ROM_MAX
+#define FX_ROM_MAX   3072               /* the meshed bomb: DMA from ROM, no conversion */
+#endif
 #define FX_BSLOTS    12
 static u16 fx_stage, fx_bslots;
-u16 xsp_tile_for(u16 key)
+u16 xsp_tile_for(u16 block, u8 pal, u8 mesh, u16 *keyp)
 {
-    u16 h = hslot(key), n = spr_blocks[key >> 4].ntiles, t;
+    u16 key = (block << 4) | pal, h, n = spr_blocks[block].ntiles, t;
+    if (mesh) {
+        for (t = block & (MESH_MAX - 1); mesh_blk[t] != block + 1; t = (t + 1) & (MESH_MAX - 1))
+            if (!mesh_blk[t]) {
+                mesh_blk[t] = block + 1;
+                break;
+            }
+        key = MESH_KEY + (t << 4) + pal;
+    }
+    *keyp = key;
     if (n > 4 && fx_bslots >= FX_BSLOTS)
         return 0;
+    h = hslot(key);
     while (htab[h].key != KEY_EMPTY) {
         if (htab[h].key == key) {
             if (htab[h].stamp != xframe && n > 4)
@@ -168,7 +206,7 @@ u16 xsp_tile_for(u16 key)
         }
         h = (h + 1) & (HASH_SIZE - 1);
     }
-    if (fx_stage + n * 32 > FX_STAGE_MAX)
+    if (fx_stage + n * 32 > (mesh ? FX_ROM_MAX : FX_STAGE_MAX))
         return 0;
     t = cache_miss(key);
     if (t) {
@@ -177,6 +215,19 @@ u16 xsp_tile_for(u16 key)
             fx_bslots++;
     }
     return t;
+}
+
+/* an effect tile still shown by plane A this frame (src/plane.c): keep it */
+void xsp_touch(u16 key)
+{
+    u16 h = hslot(key);
+    while (htab[h].key != KEY_EMPTY) {
+        if (htab[h].key == key) {
+            htab[h].stamp = xframe;
+            return;
+        }
+        h = (h + 1) & (HASH_SIZE - 1);
+    }
 }
 
 /* ------------------------------------------------------------ sprite list */
@@ -302,12 +353,17 @@ void xsp_flush(void)
     xframe++;
 }
 
+void dma_rom(u16 vram, const u32 *src, u16 words);
+
 /* VBlank: new tiles, then the sprite table */
 void xsp_upload(void)
 {
     u8 i;
     for (i = 0; i < nup; i++)
-        vdp_dma_vram(up[i].vram, stage + up[i].off, up[i].words);
+        if (up[i].off & 0x8000)             /* pre-converted tiles in ROM */
+            dma_rom(up[i].vram, pre_tiles + (up[i].off & 0x7FFF) * 8, up[i].words);
+        else
+            vdp_dma_vram(up[i].vram, stage + up[i].off, up[i].words);
     nup = 0;
     stage_len = 0;
     if (table_ready) {

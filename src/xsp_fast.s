@@ -29,6 +29,8 @@
     .set    EXPL4_LO, 0x0C0                 | expl4 (the enemy explosions, one sprite per
     .set    EXPL4_HI, 0x210                 | PCG): all PCGs while they fit the explosion's
                                             | share of FX_MAX, else every other one
+    .set    ARC_LO, 0x087                   | ele_arc (the bomb's lightning, one sprite per
+    .set    ARC_HI, 0x0B5                   | PCG): every other PCG, alternately by frame
     .set    FX_MAX, 28                      | at most this many effect sprites
     .set    DEBRIS_LO, 0x0B4                | debris.sp (particles): not drawn
     .set    DEBRIS_HI, 0x104
@@ -290,10 +292,16 @@ xsp_build:
     and.w   #3, %d6
     lsl.w   #4, %d6                     | object flips at bits 4 (H) / 5 (V)
     cmp.w   #EXPL4_LO, %d2
-    bcs.s   29f
+    bcs.s   26f
     cmp.w   #EXPL4_HI, %d2
     bcc.s   29f
     or.w    #0x100, %d6                 | bit 8: draw every other piece (if needed)
+    bra.s   29f
+26: cmp.w   #ARC_LO, %d2
+    bcs.s   29f
+    cmp.w   #ARC_HI, %d2
+    bcc.s   29f
+    or.w    #0x200, %d6                 | bit 9: every other piece, phase by frame
 29:
     add.w   %d2, %d2
     lea     ref_start, %a1
@@ -318,11 +326,17 @@ xsp_build:
     lea     ref_pieces, %a3
     add.l   %d0, %a3
 31: btst    #8, %d6
-    beq.s   39f
+    beq.s   38f
     btst    #0, 1(%sp)                  | odd pieces-left count: skipped
     beq.s   39f
-    addq.l  #8, %a3
+37: addq.l  #8, %a3
     bra     68f
+38: btst    #9, %d6
+    beq.s   39f
+    move.w  (%sp), %d5
+    add.w   %a2, %d5                    | + xframe: the other half next frame
+    btst    #0, %d5
+    bne.s   37b
 39: move.w  (%a3)+, %d0                 | dx
     move.w  (%a3)+, %d1                 | dy
     moveq   #0, %d2

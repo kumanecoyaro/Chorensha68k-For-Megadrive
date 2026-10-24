@@ -42,7 +42,8 @@ typedef struct { s16 x, y; u16 id, info; } Call;
 extern Call calls[];
 extern u16 ncalls;
 extern const s16 size_w[16], size_h[16];
-u16 xsp_tile_for(u16 key);
+u16 xsp_tile_for(u16 block, u8 pal, u8 mesh, u16 *key);
+void xsp_touch(u16 key);
 
 static u8 loaded = 0xFF, loading = 0xFF;
 static u16 load_pos;
@@ -58,7 +59,10 @@ static u32 win_nz;                      /* window rows holding something */
 static u32 vram_nz[2];                  /* plane rows (0..63) holding something in VRAM */
 static u8 wr_row[64], wr_win[64];       /* rows to write: plane row, window row (0xFF: empty row) */
 static volatile u8 wr_n;
-u16 plane_frames, plane_fx;             /* (stats for tools/uctrace.py) */
+u16 plane_frames, plane_fx;
+#ifdef PLANE_STATS
+u16 stat_pp, stat_pr, stat_cells;
+#endif             /* (stats for tools/uctrace.py) */
 
 static u8 pal_of(const Call *c) { return (c->info >> 8) & 15; }
 
@@ -104,42 +108,75 @@ static void put_image(s8 img, s16 top)
 
 /* a ref into the plane cells (like the composite path of xsp_build): all
  * of its pieces or none (0: left a sprite this frame; a part of an effect,
- * cut along the 8 px cells, shows as hard-edged blocks) */
+ * cut along the 8 px cells, shows as hard-edged blocks).  The player's bomb
+ * ($3F) is drawn meshed: translucent as on the X68000. */
 #define REF_PIECES 48
+#define HELD_MAX   128
+static u16 held_key[HELD_MAX];          /* cache keys of the effect pieces in the plane (fx_hold) */
+static u16 held_n;
+typedef struct { u16 t; s8 c0, k0; u8 tw, th, fl; } PPiece;
+static PPiece pp[REF_PIECES];           /* the pieces of the ref being drawn, on screen */
 static u8 put_ref(const Call *cl, s16 top)
 {
     u16 i0 = ref_start[cl->id], n = ref_start[cl->id + 1], i;
-    u8 objfl = (cl->info >> 14) & 3, opal = pal_of(cl);   /* bit 0 = H, bit 1 = V */
+    u8 objfl = (cl->info >> 14) & 3, opal = pal_of(cl), mesh = (cl->info & 63) == 0x3F, np = 0;
     s16 px = cl->x >> 6, py = cl->y >> 6;
-    u16 tile[REF_PIECES];
-    u8 pass;
+    s16 c_lo = (7 - hs) >> 3, c_hi = (256 - 8 - hs) >> 3;  /* columns fully on screen */
+    PPiece *q;
     if (n - i0 > REF_PIECES)
         return 0;
-    for (pass = 0; pass < 2; pass++)
-        for (i = i0; i < n; i++) {
-            const SprPiece *p = &ref_pieces[i];
-            u8 sz = p->size & 15, fl = ((p->size >> 4) & 3) ^ objfl, pal = (p->palx ^ opal) & 15;
-            s16 w = size_w[sz], h = size_h[sz], dx = p->dx, dy = p->dy, tw = w >> 3, th = h >> 3, tx, ty;
-            s16 c0, r0;
-            u16 t, attr;
-            if (objfl & 1) dx = -dx - 16 - w;
-            if (objfl & 2) dy = -dy - 16 - h;
-            c0 = (px + dx - hs + 4) >> 3;
-            r0 = (py + dy + vs + 4) >> 3;
-            if (r0 + th <= top || r0 >= top + WROWS)
-                continue;
-            if (!pass) {
-                if (!(tile[i - i0] = xsp_tile_for((p->block << 4) | pal)))
-                    return 0;
-                continue;
-            }
-            t = tile[i - i0];
-            attr = ((u16)pal_slot[pal] << 13) | ((fl & 1) << 11) | ((fl & 2) << 11);
-            for (tx = 0; tx < tw; tx++)
-                for (ty = 0; ty < th; ty++)
-                    put(c0 + ((fl & 1) ? tw - 1 - tx : tx), r0 + ((fl & 2) ? th - 1 - ty : ty), top,
-                        attr | (t + tx * th + ty));
+    {                                   /* the whole ref off screen: nothing to draw */
+        const s16 *b = ref_box + cl->id * 4;
+        s16 x0 = b[0], y0 = b[1], x1 = b[2], y1 = b[3], t;
+        if (objfl & 1) { t = x0; x0 = -x1 - 16; x1 = -t - 16; }
+        if (objfl & 2) { t = y0; y0 = -y1 - 16; y1 = -t - 16; }
+        if (((px + x1 - hs + 4) >> 3) <= c_lo || ((px + x0 - hs + 4) >> 3) > c_hi
+            || ((py + y1 + vs + 4) >> 3) - top <= 0 || ((py + y0 + vs + 4) >> 3) - top >= WROWS)
+            return 1;
+    }
+    /* pass 1: the pieces on screen and their tiles (all or none) */
+    for (i = i0; i < n; i++) {
+        const SprPiece *p = &ref_pieces[i];
+        u8 sz = p->size & 15, fl = ((p->size >> 4) & 3) ^ objfl, pal = (p->palx ^ opal) & 15;
+        s16 w = size_w[sz], h = size_h[sz], dx = p->dx, dy = p->dy, c0, k0;
+        u16 t, key;
+        if (objfl & 1) dx = -dx - 16 - w;
+        if (objfl & 2) dy = -dy - 16 - h;
+        c0 = (px + dx - hs + 4) >> 3;
+        k0 = ((py + dy + vs + 4) >> 3) - top;   /* window row of the piece's top */
+        if (k0 + (h >> 3) <= 0 || k0 >= WROWS || c0 + (w >> 3) <= c_lo || c0 > c_hi)
+            continue;
+        if (!(t = xsp_tile_for(p->block, pal, mesh, &key)))
+            return 0;
+        if (held_n < HELD_MAX)
+            held_key[held_n] = key;
+        held_n++;
+        q = &pp[np++];
+        q->t = t | ((u16)pal_slot[pal] << 13) | ((fl & 1) << 11) | ((fl & 2) << 11);
+        q->c0 = c0; q->k0 = k0; q->tw = w >> 3; q->th = h >> 3; q->fl = fl;
+    }
+#ifdef PLANE_STATS
+    stat_pp += np; stat_pr++;
+#endif
+    /* pass 2: their cells */
+    for (q = pp; np; np--, q++) {
+        s16 c0 = q->c0, k0 = q->k0, th = q->th, ka = k0 < 0 ? 0 : k0, kb = k0 + th > WROWS ? WROWS : k0 + th;
+        s16 ca = c0 < c_lo ? c_lo : c0, cb = c0 + q->tw - 1 > c_hi ? c_hi : c0 + q->tw - 1, c, k;
+        for (c = ca; c <= cb; c++) {
+            s16 tx = (q->fl & 1) ? c0 + q->tw - 1 - c : c - c0;
+            u16 *d = &win[ka][c & 31], t = q->t + tx * th;
+            if (q->fl & 2)
+                for (t += k0 + th - 1 - ka, k = ka; k < kb; k++, d += 32)
+                    *d = t--;
+            else
+                for (t += ka - k0, k = ka; k < kb; k++, d += 32)
+                    *d = t++;
+#ifdef PLANE_STATS
+            stat_cells += kb - ka;
+#endif
         }
+        win_nz |= ((1UL << (kb - ka)) - 1) << ka;
+    }
     return 1;
 }
 
@@ -202,9 +239,41 @@ static void write_static(s8 img, u32 cols)
     }
 }
 
+#define FX_CALLS 64                     /* effect calls handled per frame */
+static u8 fx_ix[FX_CALLS];              /* their indices in calls[] */
+#define FX_THIN 10                      /* more bomb refs than this: half of them per redraw */
+static u8 thin_phase;
+#ifndef FX_PERIOD
+#define FX_PERIOD 3                     /* effects redrawn every FX_PERIOD frames */
+#endif
+static u8 held_ok, fx_tick;
+static s8 held_img;
+static s16 held_hs, held_vs;
+static u8 fx_hold(s8 img, s16 best, u16 nfx)
+{
+    u16 i;
+    if (++fx_tick >= FX_PERIOD)
+        fx_tick = 0;
+    if (!fx_tick || !held_ok || img != held_img || hs != held_hs || vs != held_vs)
+        return 0;
+    for (i = 0; i < held_n; i++)        /* (still in use: not replaced this frame) */
+        xsp_touch(held_key[i]);
+#ifndef PLANE_FX_DEBUG
+    for (i = 0; i < nfx; i++)
+        calls[fx_ix[i]].id = EMPTY_REF;
+#endif
+    if (img >= 0)
+        drop_image_calls(img, &calls[best]);
+    was_fx = 1;
+    wr_n = 0;
+    return 1;
+}
+
 void plane_frame(void)
 {
     s16 best = -1, bd = 0x7FFF, top;
+    u8 nbomb = 0;
+    u16 nfx;
     s8 img = -1;
     u16 i, fx = 0;
     u8 k;
@@ -253,8 +322,14 @@ void plane_frame(void)
     /* no effect now or last frame: the image alone, written into plane rows
      * 0..h-1 only when it or its edge columns change (plane A scrolls it) */
     for (i = 0, c = calls; i < ncalls; i++, c++)
-        if (is_effect(c))
+        if (is_effect(c)) {
+            if (fx < FX_CALLS)
+                fx_ix[fx] = i;
             fx++;
+            nbomb += (c->info & 63) == 0x3F;
+        }
+    if (fx > FX_CALLS)
+        fx = FX_CALLS;                  /* (the rest stay sprites) */
     if (!fx && !was_fx) {
         u32 cols = img >= 0 ? visible_cols(&plane_img[img], hs) : 0;
         wr_n = 0;
@@ -265,32 +340,49 @@ void plane_frame(void)
             drop_image_calls(img, &calls[best]);
         return;
     }
+    /* thinning: effects are redrawn every other frame; in between the plane
+     * keeps the last ones (their tiles kept in the cache) when the image
+     * has not moved */
+    if (fx && fx_hold(img, best, fx))
+        return;
+    thin_phase ^= 1;
     was_fx = fx != 0;
     st_img = -2;                        /* (the static image is rewritten afterwards) */
-    fx = 0;
+    held_n = 0;
 
     /* the visible rows */
     top = vs >> 3;
     for (k = 0; k < WROWS; k++)
-        if (win_nz >> k & 1)
-            for (i = 0; i < 32; i++)
-                win[k][i] = 0;
+        if (win_nz >> k & 1) {
+            u32 *w = (u32 *)win[k];
+            for (i = 0; i < 16; i += 4) {
+                w[0] = 0; w[1] = 0; w[2] = 0; w[3] = 0;
+                w += 4;
+            }
+        }
     win_nz = 0;
     if (img >= 0) {
         put_image(img, top);
         drop_image_calls(img, &calls[best]);
     }
-    for (i = 0, c = calls; i < ncalls; i++, c++)
-        if (is_effect(c)) {
+    for (k = 0, nfx = fx, fx = 0; k < nfx; k++) {
+        c = &calls[fx_ix[k]];
+        {
+            u8 bomb = (c->info & 63) == 0x3F;
             fx++;
-            if (!put_ref(c, top))
-                continue;
+            if (bomb && nbomb > FX_THIN && ((fx + thin_phase) & 1))
+                ;                       /* thinned: every other bomb ref, alternately */
+            else if (!put_ref(c, top) && !bomb)
+                continue;               /* (the meshed bomb: skipped this frame, not a sprite) */
 #ifndef PLANE_FX_DEBUG
             c->id = EMPTY_REF;
 #endif
         }
+    }
     if (fx)
         plane_fx++;
+    held_ok = fx && held_n <= HELD_MAX;
+    held_img = img; held_hs = hs; held_vs = vs;
 
     /* rows to write: holding something now or in VRAM */
     wr_n = 0;
@@ -317,10 +409,11 @@ void plane_reset(void)
     st_img = -1; st_cols = 0;           /* (the cleared plane: nothing written) */
     was_fx = 0;
     boss_seen = 0;
+    held_ok = 0;
 }
 
 /* DMA must not cross a 128 KB boundary of the source */
-static void dma_rom(u16 vram, const u32 *src, u16 words)
+void dma_rom(u16 vram, const u32 *src, u16 words)
 {
     u32 a = (u32)src, room = (0x20000 - (a & 0x1FFFF)) >> 1;
     if (words > room) {
@@ -346,6 +439,9 @@ void plane_upload(void)
             loading = 0xFF;
         }
     }
+#ifdef NO_PLANE_DMA
+    wr_n = 0;
+#endif
     for (i = 0; i < wr_n; i++)
         vdp_dma_vram(VRAM_PLANE_A + wr_row[i] * 64, wr_win[i] == 0xFF ? zero_row : win[wr_win[i]], 32);
     wr_n = 0;

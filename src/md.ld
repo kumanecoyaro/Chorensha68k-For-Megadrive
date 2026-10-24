@@ -2,12 +2,13 @@ OUTPUT_FORMAT("elf32-m68k")
 OUTPUT_ARCH(m68k)
 ENTRY(_start)
 
-/* RAM $FF0000-$FF9FFF holds the original game's variables (tools/relocate.py,
- * ORIG_RAM / ORIG_RAM_SIZE); the port's own data starts at $FFA000. */
+/* RAM $FF0000-$FF9BFF holds the original game's variables (tools/relocate.py,
+ * ORIG_RAM / ORIG_RAM_SIZE, checked in src/main.c); the port's own data
+ * starts at $FF9C00, the stack is at the top. */
 MEMORY
 {
     rom (rx)  : ORIGIN = 0x000000, LENGTH = 4M
-    ram (rwx) : ORIGIN = 0xFFA000, LENGTH = 0x5E00
+    ram (rwx) : ORIGIN = 0xFF9C00, LENGTH = 0x6200
 }
 
 SECTIONS

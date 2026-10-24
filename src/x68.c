@@ -109,14 +109,14 @@ extern volatile u8 frame_ready;
 /* fn_2cbda: wait for the vsync after the last sprite flush (the VBlank
  * interrupt shows the frame and clears frame_ready) */
 #ifdef FRAME_PROBE
-u16 probe[64][4];               /* per frame: line stamps at vsync end, xsp_out, after flush */
+u16 probe[32][4];               /* per frame: line stamps at vsync end, xsp_out, after flush */
 u8 probe_n;
 u16 stamp(void)
 {
     u8 v = *(volatile u8 *)0xC00008;
     return (u16)(vblank_count * 262 + (v < 0xE0 ? v + 40 : v - 0xE0));
 }
-#define PROBE(k) probe[probe_n & 63][k] = stamp()
+#define PROBE(k) probe[probe_n & 31][k] = stamp()
 #else
 #define PROBE(k)
 #endif

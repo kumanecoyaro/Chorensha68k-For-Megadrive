@@ -4,6 +4,9 @@
 #include "orig.h"
 #include "spr.h"
 
+/* the original's RAM must end below the port's (src/md.ld: $FF9C00) */
+_Static_assert(ORIG_RAM + ORIG_RAM_SIZE <= 0xFF9C00, "original RAM overlaps the port's");
+
 long ocall(void *fn, long a1, long a2, long a3, long a4);
 long x_bg_load(void);
 long x_text_clear(void);
@@ -33,13 +36,13 @@ volatile u8 frame_ready;
 static u8 vbl_busy;
 
 #ifdef FRAME_PROBE
-u16 vprobe[64][4];
+u16 vprobe[32][4];
 u16 stamp(void);
 #endif
 void vblank_work(void)
 {
 #ifdef FRAME_PROBE
-    u16 *vp = vprobe[vblank_count & 63];
+    u16 *vp = vprobe[vblank_count & 31];
     vp[0] = stamp();
 #endif
     if (vbl_busy)
