@@ -1,9 +1,10 @@
 /*
  * Sound: PCM sound effects + YM2612 write queue (replaces MCDRV).
  *
- * Samples are stored in ROM already converted to 8-bit unsigned 15.625 kHz
- * (tools/convert_pcm.py) and streamed by the Z80 straight to the YM2612 DAC
- * (tools/z80_pcm_driver.py).  The Z80 also performs every YM2612 register
+ * Samples are stored in ROM already converted to 8-bit unsigned PCM at the
+ * driver's rate (13317 Hz, tools/convert_pcm.py) and streamed by the Z80 to
+ * the YM2612 DAC (tools/z80_pcm_driver.py: paced by YM2612 timer A, read
+ * ahead into Z80 RAM; sound_dma() tells it not to touch ROM during VDP DMA).  The Z80 also performs every YM2612 register
  * write: ym_write() queues them and sound_update() copies the queue into the
  * Z80 ring buffer once per frame.  FM channel 6 is lent to the DAC only while
  * a sound effect plays.
@@ -169,6 +170,16 @@ void sound_init(void)
     ym_put(0, 0x2B, 0x00);          /* DAC off: FM6 belongs to the music */
 }
 
+/* VBlank: VDP DMA is about to start / is over.  A Z80 access to the 68000
+ * bus during DMA stalls the Z80 for the whole transfer: it plays from its
+ * read-ahead buffer meanwhile. */
+void sound_dma(u8 on)
+{
+    z80_get_bus();
+    Z80_RAM[0x1FE2] = on;
+    z80_release_bus();
+}
+
 /* fn_034ae */
 void sound_request(u8 no)
 {
@@ -220,7 +231,7 @@ void sound_update(void)
         Z80_RAM[0x1FF7] = (u8)(len >> 16);
         Z80_RAM[0x1FF0] = 1;
         play_pr = e->priority;
-        play_frames = (u16)(len >> 8) + 1;          /* ~260 samples per frame */
+        play_frames = (u16)((len * 295) >> 16) + 2; /* 13317 Hz: ~222 samples per frame */
     }
     z80_release_bus();
     ym_flush();

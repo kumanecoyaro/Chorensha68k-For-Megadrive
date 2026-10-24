@@ -8,6 +8,7 @@ long ocall(void *fn, long a1, long a2, long a3, long a4);
 long x_bg_load(void);
 long x_text_clear(void);
 void plane_upload(void);
+void sound_dma(u8 on);
 void bg_chips(void);
 
 u16 frame_count;
@@ -46,9 +47,11 @@ void vblank_work(void)
     vbl_busy = 1;
     bg_chips();
     if (frame_ready) {
+        sound_dma(1);
         xsp_upload();
         bg_upload();
         plane_upload();
+        sound_dma(0);
         if (text_dirty) {
             hud_build();
             vdp_load_words(VRAM_WINDOW, hud_line, 32);
@@ -60,8 +63,10 @@ void vblank_work(void)
 #ifdef FRAME_PROBE
     vp[1] = stamp();
 #endif
+#ifndef NO_MUSIC
     bgm_service();
     music_update();
+#endif
 #ifdef FRAME_PROBE
     vp[2] = stamp();
 #endif

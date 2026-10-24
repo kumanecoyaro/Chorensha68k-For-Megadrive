@@ -19,7 +19,7 @@ CFLAGS = -m68000 -mstrict-align -O2 -fno-strict-aliasing -fomit-frame-pointer -f
          -fno-asynchronous-unwind-tables -Wall -Wno-main -Isrc -I$(GEN)
 LDFLAGS = -m68000 -nostdlib -static -Wl,--build-id=none -T src/md.ld
 
-SRCS = src/main.c src/x68.c src/xsp.c src/vdp.c src/bg.c src/plane.c src/sound.c src/music.c \
+SRCS = src/main.c src/x68.c src/xsp.c src/vdp.c src/bg.c src/plane.c src/title.c src/sound.c src/music.c \
        $(GEN)/assets.c $(GEN)/pcm.c $(GEN)/z80drv.c $(GEN)/bgm.c $(GEN)/spr.c
 OBJS = $(BUILD)/crt0.o $(BUILD)/hooks.o $(BUILD)/xsp_fast.o $(BUILD)/pcm_data.o $(BUILD)/spr_data.o $(patsubst %.c,$(BUILD)/%.o,$(notdir $(SRCS)))
 

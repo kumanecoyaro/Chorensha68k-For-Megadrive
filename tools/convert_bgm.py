@@ -111,15 +111,27 @@ def choose_dropped(mdx):
     center -= set(drop)
     return drop, fm6, center, copies, partial
 
+DT2_RATIO = (1.0, 1.41, 1.57, 1.73)
+
+def dt2_mul(dt1mul, dt2):
+    """YM2151 DT2 multiplies an operator's frequency by 1.41 / 1.57 / 1.73
+    (the inharmonic partials of the drum voices); the YM2612 has no DT2: the
+    nearest MUL (0 = x0.5) instead."""
+    mul = dt1mul & 15
+    if dt2:
+        r = (mul or 0.5) * DT2_RATIO[dt2]
+        mul = 0 if r < 0.75 else min(15, int(r + 0.5))
+    return (dt1mul & 0x70) | mul
+
 def voice_bytes(v):
     """28 bytes: no, FB/ALG, slot mask, carrier mask, then 4 x (DT1/MUL, TL, KS/AR, AM/D1R, D2R, D1L/RR)."""
     cm = sum(1 << i for i in CARRIERS[v.con])
     out = [v.no, (v.fb << 3) | v.con, v.mask, cm]
-    out += [x & 0x7F for x in v.dt1mul]
+    out += [dt2_mul(x, d >> 6) for x, d in zip(v.dt1mul, v.dt2d2r)]
     out += [x & 0x7F for x in v.tl]
     out += [x & 0xDF for x in v.ksar]
     out += [x & 0x9F for x in v.amed1r]
-    out += [x & 0x1F for x in v.dt2d2r]          # DT2 (bits 7-6) dropped
+    out += [x & 0x1F for x in v.dt2d2r]          # DT2 (bits 7-6): folded into MUL above
     out += list(v.d1lrr)
     return out
 

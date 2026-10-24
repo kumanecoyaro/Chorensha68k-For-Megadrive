@@ -105,6 +105,7 @@ HOOKS = [
     (0x035ec, 'x_nop', 'c'),
     # game over / name entry, title
     (0x0132c, 'x_game_over', 'c'),
+    (0x02dac, 'x_title_menu', 'c'),     # title menu (src/title.c)
     (0x3966a, 'x_nop', 'c'),            # printf (error messages)
     (0x39750, 'x_nop', 'c'),
 ]
@@ -131,13 +132,8 @@ def patches():
         # fn_056ae skips a chip equal to the one already in the page cell; with
         # both layers on one plane (src/bg.c) the far chip under it may differ
         (0x057f0, '6774', '4e71', 'BG: always draw the chip (beq.b L05866 -> nop)'),
-        # title menu (fn_02dac): no replay demo when idle (ble.b L02f34 -> bra.b);
         # L03e60: "exit" stays on the title (bne.b L03f5c -> bra.b)
-        (0x02f8e, '6fa4', '60a4', 'title: no idle replay demo'),
         (0x03f46, '6614', '6014', 'title: exit does not quit'),
-        # CONFIGURE is an X68000 512-dot text screen of X68000 settings (screen
-        # mode, XSP mode...): the menu item does nothing (bra.w L02e22)
-        (0x03050, '48780001', '6000fdd0', 'title: CONFIGURE disabled'),
     ]
 
 def main(xpath, lst, xspdir, out):

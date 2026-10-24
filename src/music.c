@@ -139,9 +139,13 @@ static const u8 *find_voice(u8 no)
     return NULL;
 }
 
+/* the whole music is attenuated by MUSIC_ATT (TL steps of 0.75 dB): the
+ * DAC playing the sound effects only has one FM channel's level */
+#define MUSIC_ATT 8
+
 static s16 atten(const MCh *c)
 {
-    return c->atvol >= 0 ? c->atvol : vol_table[c->vol];
+    return (c->atvol >= 0 ? c->atvol : vol_table[c->vol]) + MUSIC_ATT;
 }
 
 static void fm_tl(MCh *c, s16 lfo)
@@ -604,7 +608,7 @@ void music_play(u8 no)
     if (!song)
         return;
     ym_write(0, 0x22, 0);                           /* YM2612 LFO off */
-    ym_write(0, 0x27, 0);                           /* ch3 normal, timers off */
+    /* ($27, ch3 mode / timers: the Z80 driver runs on timer A) */
     for (i = 0; i < NCH; i++) {
         MCh *c = &ch[i];
         u8 *p = (u8 *)c;

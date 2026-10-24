@@ -22,6 +22,7 @@ STEPS = [16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80,
          494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552]
 INDEX_ADJ = [-1, -1, -1, -1, 2, 4, 6, 8]
 RATES = {0: 3906, 1: 5208, 2: 7812, 3: 10416, 4: 15625}
+OUT_RATE = 13317       # the Z80 driver's rate (YM2612 timer A, tools/z80_pcm_driver.py)
 
 def adpcm_decode(data):
     """MSM6258 ADPCM -> list of 12-bit signed samples."""
@@ -82,7 +83,7 @@ def main(cnf, pcmdir, out, wavdir=None):
         key = (fname, rate)
         if key not in files:
             raw = open(os.path.join(pcmdir, os.path.basename(fname)), 'rb').read()
-            pcm = to_u8(normalise(resample(adpcm_decode(raw), rate, 15625)))
+            pcm = to_u8(normalise(resample(adpcm_decode(raw), rate, OUT_RATE)))
             files[key] = (len(blob), len(pcm))
             blob += pcm
             if len(blob) & 1:
@@ -90,7 +91,7 @@ def main(cnf, pcmdir, out, wavdir=None):
             if wavdir:
                 os.makedirs(wavdir, exist_ok=True)
                 w = wave.open(os.path.join(wavdir, f'{os.path.basename(fname)}_{rate}.wav'), 'wb')
-                w.setnchannels(1); w.setsampwidth(1); w.setframerate(15625); w.writeframes(pcm); w.close()
+                w.setnchannels(1); w.setsampwidth(1); w.setframerate(OUT_RATE); w.writeframes(pcm); w.close()
         off, ln = files[key]
         table[no] = (off, ln, pr)
     open(os.path.join(out, 'pcm.bin'), 'wb').write(blob)
@@ -107,7 +108,7 @@ def main(cnf, pcmdir, out, wavdir=None):
         'typedef struct { u32 offset; u32 length; u16 priority; } PcmEntry;',
         'extern const PcmEntry pcm_table[256];',
         'extern const u8 pcm_data[];            /* pcm.bin, 32 KB aligned (pcm_data.s) */',
-        f'#define PCM_RATE 15625', f'#define PCM_DATA_SIZE {len(blob)}', '#endif', '']))
+        f'#define PCM_RATE {OUT_RATE}', f'#define PCM_DATA_SIZE {len(blob)}', '#endif', '']))
     print(f'{len(ents)} entries, {len(files)} files, {len(blob)} bytes of 8-bit PCM')
 
 if __name__ == '__main__':
