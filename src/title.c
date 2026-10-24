@@ -24,6 +24,7 @@ long x_text_clear(void);
 long x_text_putc(long x, long y, long ch);
 long x_xsp_out0(void);
 long x_wait(long n);
+long x_screen_clear(long mode);
 long x_bgm_play(long no);
 long x_joybtn(long port);
 long x_joydir(long port);
@@ -92,6 +93,7 @@ long x_title_menu(void)
     x_text_clear();
     x_xsp_out0();
     x_xsp_out0();
+    x_screen_clear(0);                  /* graphic screen off (the last game's BG) */
     ocall(OFN(0x051b8), 0, 0, 0, 0);    /* palettes */
     logo_slide();
     OL(0x4a0ea) = OL(0x4a0dc);          /* (as the original: the score shown) */

@@ -75,7 +75,7 @@ HOOKS = [
     (0x01036, 'x_nop', 'c'),
     (0x00c9c, 'x_nop', 'c'),
     # screen / misc IOCS
-    (0x3975a, 'x_screen_clear', 'c'),   # IOCS $B2 (graphic screen clear): title, game start
+    (0x3975a, 'x_screen_clear', 'c'),   # IOCS $B2 (graphic screen on / off): title, game start
     (0x00c48, 'x_nop', 'c'),            # replay buffer allocation (replay removed)
     (0x39d92, 'x_nop', 'c'),
     (0x2ff62, 'x_wait', 'c'),           # wait n+1 vertical blanks (title, game over, pause)

@@ -179,16 +179,22 @@ long x_wait(long n)
     return 0;
 }
 
-/* fn_3975a (IOCS $B2, graphic screen clear: title screen, game start):
- * both planes */
+/* fn_3975a (IOCS $B2): graphic screen display, d1 = pages shown (0: off,
+ * 3: both).  The original turns it off, draws the whole stage screen and
+ * turns it on (game start), so the first frame shows a complete screen.
+ * Off: both planes cleared (what is drawn next is a new screen) and plane B
+ * hidden until it is turned on again. */
 void bg_reset(void);
+void bg_show(u8 on);
 void plane_reset(void);
 long x_screen_clear(long mode)
 {
     u16 i;
-    (void)mode;
     while (frame_ready)
         ;
+    bg_show(mode != 0);
+    if (mode)
+        return 0;
     bg_reset();
     plane_reset();
     for (i = 0; i < 16; i++) {          /* planes A ($C000) and B ($E000), 4 KB each */

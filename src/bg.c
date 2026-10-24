@@ -219,6 +219,15 @@ long x_bg_full(void)
     return 0;
 }
 
+/* the original's graphic screen on / off (IOCS $B2, x_screen_clear): off
+ * while a stage is being drawn, on when it is complete.  Off, plane B shows
+ * plane A's name table instead (empty then: no large enemy yet). */
+static volatile u8 bg_on;
+void bg_show(u8 on)
+{
+    bg_on = on;
+}
+
 /* x_screen_clear: drop the queued writes (the planes are being cleared) */
 void bg_reset(void)
 {
@@ -265,6 +274,7 @@ void bg_scroll(s16 x0, s16 x1, s16 y0, s16 y1)
 
 void bg_upload(void)
 {
+    VDP_CTRL = 0x8400 | (bg_on ? VRAM_PLANE_B >> 13 : VRAM_PLANE_A >> 13);
     VDP_CTRL32 = VSRAM_W(2);                /* plane B */
     VDP_DATA = scroll_y[0] & 511;
     VDP_CTRL32 = VRAM_W(VRAM_HSCROLL + 2);
