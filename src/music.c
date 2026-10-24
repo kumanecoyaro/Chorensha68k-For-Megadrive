@@ -18,7 +18,7 @@
 #define MUTED 0xFF
 
 typedef struct {
-    u8 w;               /* 0 saw, 1 square, 2 triangle (+4: fine resolution, same here) */
+    u8 w;               /* 0 saw, 1 square, 2 triangle (+4: depth x 256) */
     u16 period, t;
     s32 step, val;      /* 1/256 units */
     s8 dir;
@@ -307,6 +307,8 @@ static void lfo_reset(Lfo *l, u8 w, u16 p, s16 a)
     l->w = w;
     l->period = p ? p : 1;
     l->step = a;        /* change per tick in 1/256 detune (MP) or TL (MA) units */
+    if (w & 4)          /* MXDRV: waveform + 4 = depth x 256 (the drums' pitch drop: */
+        l->step <<= 8;  /* MP6,80,-204 sweeps a kick down 3 semitones a tick) */
     l->t = 0;
     l->dir = 1;
     l->first = 1;
