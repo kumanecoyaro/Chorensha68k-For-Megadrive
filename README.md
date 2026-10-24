@@ -90,7 +90,7 @@ make XDF=path/to/CH68_110_1.xdf
 | `tools/z80_pcm_driver.py` | Z80 ドライバ生成（DAC 再生 + YM2612 書き込みキュー） |
 | `tools/mdx.py`, `tools/convert_bgm.py` | MDX 解析 / チャンネル割り当て・音程表の生成 |
 | `tools/rom_budget.py` | ROM サイズ集計 |
-| `tools/build_variant.sh` | デバッグ用ビルド（`-DTEST_MUTEKI` 無敵, `-DFRAME_PROBE` 処理時間計測, `-DZ80_PEEK` ほか） |
+| `tools/build_variant.sh` | デバッグ用ビルド（`-DTEST_MUTEKI` 無敵, `-DFRAME_PROBE` 処理時間計測, `-DPLANE_ONLY` プレーンAだけ表示, `-DZ80_PEEK` ほか） |
 | `tools/fixrom.py` | ROM ヘッダとチェックサムの設定 |
 | `tools/mdrun.py` | libretro コア（Genesis Plus GX）でのヘッドレス実行・スクリーンショット |
 | `tools/uctrace.py` | unicorn の 68000 で ROM を実行（ROM 書き込み検出・プロファイル・命令数計測） |

@@ -49,6 +49,10 @@ void vblank_work(void)
     if (frame_ready) {
         sound_dma(1);
         xsp_upload();
+#ifdef PLANE_ONLY
+        VDP_CTRL32 = VRAM_W(VRAM_SPRITES);
+        VDP_DATA = 0; VDP_DATA = 0; VDP_DATA = 0; VDP_DATA = 0;
+#endif
         bg_upload();
         plane_upload();
         sound_dma(0);

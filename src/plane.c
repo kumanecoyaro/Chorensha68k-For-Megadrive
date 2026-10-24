@@ -173,6 +173,7 @@ static void write_static(s8 img, u32 cols)
             for (c = 0; c < im->w; c++, m++)
                 if (*m && (cols >> c & 1))
                     win[r][c] = attr + *m;
+        win_nz = (1UL << h) - 1;        /* (cleared by the full path when it takes over) */
     }
     wr_n = 0;
     for (pr = 0; pr < 64; pr++) {

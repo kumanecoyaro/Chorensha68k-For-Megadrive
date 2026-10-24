@@ -240,6 +240,9 @@ void bg_chips(void)
     }
     upq_n = 0;
     n = chipq_n;
+#ifdef PLANE_ONLY
+    n = 0;
+#endif
     for (i = 0; i < n; i++) {
         const u16 *w = chipq[i].w;
         u16 base = chipq[i].vram;
