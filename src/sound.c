@@ -125,6 +125,16 @@ void ym_put(u8 part, u8 reg, u8 val)
     queue[qlen++] = val;
 }
 
+/* a driver command in the queue ($FF start the effect set up at $1FF1) */
+static void ym_cmd(u8 c)
+{
+    while (qlen + 3 > QMAX)
+        ym_flush();
+    queue[qlen++] = c;
+    queue[qlen++] = 0;
+    queue[qlen++] = 0;
+}
+
 /* part 0/1.  Key-on ($28) and frequency ($A0-$AF) writes are never
  * filtered: $A4-$A6 go to a latch shared by all channels that is only
  * applied by the following $A0-$A2 write, so they must always come as a pair. */
@@ -197,6 +207,7 @@ void sound_request(u8 no)
 void sound_update(void)
 {
     const PcmEntry *e = NULL;
+    u8 start = 0;
 
     if (play_frames && --play_frames == 0) {
         ym_put(0, 0x2B, 0x00);      /* effect over: FM6 back to the music */
@@ -229,11 +240,13 @@ void sound_update(void)
         Z80_RAM[0x1FF5] = (u8)len;
         Z80_RAM[0x1FF6] = (u8)(len >> 8);
         Z80_RAM[0x1FF7] = (u8)(len >> 16);
-        Z80_RAM[0x1FF0] = 1;
         play_pr = e->priority;
+        start = 1;
         play_frames = (u16)((len * 295) >> 16) + 2; /* 13317 Hz: ~222 samples per frame */
     }
     z80_release_bus();
+    if (start)
+        ym_cmd(0xFF);               /* start (after the DAC enable queued above) */
     ym_flush();
 #ifdef Z80_PEEK
     {
