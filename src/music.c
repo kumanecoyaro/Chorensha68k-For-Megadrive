@@ -55,6 +55,7 @@ typedef struct {
     s32 pacc;
     Lfo mp, ma;
     u8 mp_act, ma_act;
+    u8 lt;              /* LFO ticks not applied yet (music_update) */
     u8 used_noise;
     u16 lastfreq;       /* block/F-number last written (skip identical writes) */
     s16 lastatt;        /* attenuation + volume LFO last written to the carriers' TL */
@@ -317,6 +318,29 @@ static void lfo_reset(Lfo *l, u8 w, u16 p, s16 a)
         l->val = -(l->step * (s32)(l->period >> 1));
 }
 
+static void lfo_tick(Lfo *l);
+/* n ticks at once */
+static void lfo_advance(Lfo *l, u8 n)
+{
+    if ((l->w & 3) == 2) {              /* triangle (vibrato, the drums' sweeps), inline */
+        s32 st = l->dir > 0 ? l->step : -l->step;
+        u16 lim = l->first ? l->period >> 1 : l->period;
+        while (n--) {
+            l->val += st;
+            if (++l->t >= lim) {
+                l->t = 0;
+                l->dir = -l->dir;
+                l->first = 0;
+                st = -st;
+                lim = l->period;
+            }
+        }
+        return;
+    }
+    while (n--)
+        lfo_tick(l);
+}
+
 static void lfo_tick(Lfo *l)
 {
     l->t++;
@@ -396,6 +420,7 @@ static void step(MCh *c)
             c->slide = c->porta;
             c->porta = 0;
             if (!tied) {
+                c->lt = 0;
                 c->mp_act = c->mp_on;
                 if (c->mp_act) {
                     lfo_reset(&c->mp, c->mp_w, c->mp_p, c->mp_a);
@@ -569,23 +594,12 @@ static void tick(void)
                 c->pacc += c->slide;
                 changed = 1;
             }
-            if (c->mp_act) {
-                s16 v;
-                lfo_tick(&c->mp);
-                v = (s16)shr8(&c->mp.val);
-                if (v != c->mp_last) {          /* pitch only moves in whole steps */
-                    c->mp_last = v;
-                    changed = 1;
-                }
-            }
-            /* LFO / slide register updates are applied once per VBlank
-             * (music_update), not at every tick */
+            /* the LFOs advance once per VBlank by the ticks counted here, and
+             * LFO / slide register updates are applied then (music_update) */
+            if (c->mp_act | c->ma_act)
+                c->lt++;
             if (changed)
                 c->dirty |= 1;
-            if (c->ma_act) {
-                lfo_tick(&c->ma);
-                c->dirty |= 2;
-            }
         }
     }
 }
@@ -658,6 +672,22 @@ void music_update(void)
     {
         MCh *c;
         for (c = ch; c < ch + NCH; c++) {
+            if (c->lt) {
+                if (c->mp_act) {
+                    s16 v;
+                    lfo_advance(&c->mp, c->lt);
+                    v = (s16)shr8(&c->mp.val);
+                    if (v != c->mp_last) {      /* pitch only moves in whole steps */
+                        c->mp_last = v;
+                        c->dirty |= 1;
+                    }
+                }
+                if (c->ma_act) {
+                    lfo_advance(&c->ma, c->lt);
+                    c->dirty |= 2;
+                }
+                c->lt = 0;
+            }
             if (!c->dirty)
                 continue;
             if (c->dirty & 1)

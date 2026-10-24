@@ -48,6 +48,7 @@ u16 pal_attr[16];                       /* $8000 | MD palette << 13 for each X68
 
 static u16 slot_ent[NSLOT];             /* hash entry holding the slot, NO_ENTRY = free */
 static u16 clock_a, clock_b;
+static u16 full_frame[2] = { 0xFFFF, 0xFFFF };  /* xframe at which the 4 / 16-tile slots ran out */
 u16 xsp_misses, xsp_fail;
 
 static u8 stage[STAGE_BYTES] __attribute__((aligned(4)));
@@ -124,21 +125,29 @@ u16 cache_miss(u16 key)
         xsp_fail++;
         return 0;
     }
-    if (n <= 4) {
-        clk = &clock_a; start = 0; i = CACHE_A_SLOTS;
-    } else {
-        clk = &clock_b; start = CACHE_A_SLOTS; i = CACHE_B_SLOTS;
-    }
-    /* clock replacement: the next slot not used by the frame being built */
-    for (;;) {
-        s = start + *clk;
-        if (++*clk >= i)
-            *clk = 0;
-        if (slot_ent[s] == NO_ENTRY || htab[slot_ent[s]].stamp != xframe)
-            break;
-        if (!--i) {
+    {
+        u8 big = n > 4;
+        if (full_frame[big] == xframe) {
             xsp_fail++;
-            return 0;               /* every slot is in use this frame */
+            return 0;               /* (found full already this frame) */
+        }
+        if (!big) {
+            clk = &clock_a; start = 0; i = CACHE_A_SLOTS;
+        } else {
+            clk = &clock_b; start = CACHE_A_SLOTS; i = CACHE_B_SLOTS;
+        }
+        /* clock replacement: the next slot not used by the frame being built */
+        for (;;) {
+            s = start + *clk;
+            if (++*clk >= (big ? CACHE_B_SLOTS : CACHE_A_SLOTS))
+                *clk = 0;
+            if (slot_ent[s] == NO_ENTRY || htab[slot_ent[s]].stamp != xframe)
+                break;
+            if (!--i) {
+                full_frame[big] = xframe;
+                xsp_fail++;
+                return 0;           /* every slot is in use this frame */
+            }
         }
     }
     if (slot_ent[s] != NO_ENTRY)
