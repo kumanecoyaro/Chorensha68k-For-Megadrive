@@ -26,8 +26,9 @@ from x68gfx import load_pal, tile8, pcg16, load_chips, load_map, chip_pixels
 STAGES = [
     ('bg_fb_nw.pal', range(0, 10)),     # stage 1
     ('bg_fy_np.pal', range(7, 18)),     # stage 2
+    ('bg_fy_nr.pal', range(15, 26)),    # stage 3
 ]
-BG_TILE_MAX = 402                       # VRAM tiles 1..401 (src/xsp.c: the sprite cache follows)
+BG_TILE_MAX = 466                       # VRAM tiles 1..465 (src/xsp.c: the sprite cache follows, 32 4-tile slots at least)
 
 def seg_rows(segs):
     return [r for s in segs for r in range(1024 - 16 * (s + 1), 1024 - 16 * s)]

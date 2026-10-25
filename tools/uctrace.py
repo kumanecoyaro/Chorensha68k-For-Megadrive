@@ -211,6 +211,8 @@ def main():
                     uc.mem_write(sym[k], b'\0\0')
             fl.append((gf, state['n'] - state.get('vs', 0) - state.get('wait', 0))); state['vs'] = state['n']; state['wait'] = 0
             state['gf'] = gf
+            if profr and gf > profr[1]:
+                uc.emu_stop()               # (the profiled range is over)
             if frl and frl[0] <= gf <= frl[1]:
                 print(f'frame gf {gf} insns {fl[-1][1]} vbl {state["vbl"]}')
         if vs_lo <= addr < vs_hi:

@@ -66,6 +66,12 @@ PLANE_GROUPS = [
         [('obj205', 0, 0, 7)], [('obj205', 1, 0, 7)], [('obj205', 2, 0, 7)],
         [('obj205', 3, 0, 7)], [('obj205', 4, 0, 7)], [('obj205', 5, 0, 7)],
     ],
+    [   # stage 3 boss obj207: $B34..$B3B (its frames: 273 tiles together)
+        [('obj207', i, 0, 7)] for i in range(8)
+    ],
+    [   # its second form $B3C, $B3D
+        [('obj207', 8, 0, 7)], [('obj207', 9, 0, 7)],
+    ],
 ]
 BOMB_REFS = list(range(0xB6, 0xC0)) + list(range(0xAA9, 0xAAF))   # expl2 / expl3 / flare (src/plane.c is_effect)
 BOMB_PALS = (1, 3, 5, 12)  # X68000 palettes the bomb draws them with (info $x13F / $xC3F ...)

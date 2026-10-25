@@ -42,6 +42,8 @@ _Static_assert(ENEMY_BASE + PLANE_MAX_TILES <= VRAM_PLANE_A / 32, "plane A enemy
 #define REF_O205   0xB2B                /* stage 2 boss obj205: $B2B..$B30 with pods, $B31 core */
 #define IMG_O200   5                    /* obj200 palette 8 arms closed, body alone; palette 7 the same */
 #define IMG_O205   9                    /* core, then $B2B..$B30 */
+#define REF_O207   0xB34                /* stage 3 boss obj207: $B34..$B3B, second form $B3C / $B3D */
+#define IMG_O207   16                   /* $B34..$B3D */
 #define LOAD_CHUNK 64                   /* tiles per VBlank */
 #define WROWS      29                   /* plane rows on screen (224 lines + fine scroll) */
 
@@ -446,9 +448,10 @@ void plane_frame(void)
         big |= id < REF_O21F;           /* (pl_refmap: the bosses and mid bosses below obj21f) */
         if (img == 2 || img >= IMG_O205)
             continue;
-        if (id == REF_BOSS || (u16)(id - REF_O205) <= 6) {      /* a boss: before anything else */
+        if (id == REF_BOSS || (u16)(id - REF_O205) <= 6 || (u16)(id - REF_O207) <= 9) {   /* a boss: first */
             best = i;
-            img = id == REF_BOSS ? 2 : id == REF_O205 + 6 ? IMG_O205 : IMG_O205 + 1 + (id - REF_O205);
+            img = id == REF_BOSS ? 2 : id >= REF_O207 ? IMG_O207 + (id - REF_O207)
+                : id == REF_O205 + 6 ? IMG_O205 : IMG_O205 + 1 + (id - REF_O205);
             boss_seen = 1;
             continue;
         }

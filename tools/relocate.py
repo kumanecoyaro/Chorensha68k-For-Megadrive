@@ -133,9 +133,9 @@ def patches():
         # player Y limit: the X68000 screen is 256 lines, the Mega Drive shows 224
         (0x0604a, '3f00', '3700', 'player y limit (cmp.w #$3f00,d1)'),
         (0x06052, '3f00', '3700', 'player y limit (move.w #$3f00,B_4cca0)'),
-        # stages 1 and 2 are converted so far: after the stage 2 clear (state
-        # $210) back to stage 1 (addq.w #1,B_4a0ee -> subq.w; src/bg.c restarts the map)
-        (0x07b82, '5279', '5379', 'stage 2 -> stage 1 (addq.w #1,abs.l -> subq.w)'),
+        # stages 1-3 are converted so far: after the stage 3 clear (state
+        # $210) back to stage 1 (addq.w #1,B_4a0ee -> subq.w #2; src/bg.c restarts the map)
+        (0x0872a, '5279', '5579', 'stage 3 -> stage 1 (addq.w #1,abs.l -> subq.w #2)'),
         # fn_056ae skips a chip equal to the one already in the page cell; with
         # both layers on one plane (src/bg.c) the far chip under it may differ
         (0x057f0, '6774', '4e71', 'BG: always draw the chip (beq.b L05866 -> nop)'),

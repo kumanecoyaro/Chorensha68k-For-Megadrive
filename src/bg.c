@@ -53,7 +53,11 @@ void xsp_cache_layout(u16 bg_end);
 static const BgSet *bs = &bg_sets[0];
 static u8 bs_stage = 1;                     /* stage of the set in use */
 static volatile u8 bs_pending;              /* VBlank: upload the set's tiles and palettes */
-static u8 slot_of[BG_NCOMP_MAX];                /* composite -> slot + 1, 0 = not loaded */
+/* composite -> slot: open addressing (a stage has up to ~1100 composites,
+ * the pool holds COMP_SLOTS of them) */
+#define SOF_SIZE 128
+static u16 sof_key[SOF_SIZE];               /* composite + 1, 0 = free */
+static u8 sof_slot[SOF_SIZE];
 static u16 slot_comp[COMP_SLOTS];
 static u8 slot_ref[COMP_SLOTS];
 static u8 slot_clock;
@@ -88,6 +92,53 @@ static void irq_off(void) { __asm__ volatile("move.w #0x2700, %sr"); }
 static void irq_on(void)  { __asm__ volatile("move.w #0x2500, %sr"); }
 
 /* ------------------------------------------------------------ composites */
+static inline u8 sof_home(u16 c) { return (c ^ (c >> 7)) & (SOF_SIZE - 1); }
+
+/* composite c (0-based) -> slot + 1, 0 = not loaded */
+static u8 slot_of(u16 c)
+{
+    u8 h = sof_home(c);
+    c++;
+    while (sof_key[h]) {
+        if (sof_key[h] == c)
+            return sof_slot[h];
+        h = (h + 1) & (SOF_SIZE - 1);
+    }
+    return 0;
+}
+
+static void sof_put(u16 c, u8 s1)
+{
+    u8 h = sof_home(c);
+    while (sof_key[h])
+        h = (h + 1) & (SOF_SIZE - 1);
+    sof_key[h] = c + 1;
+    sof_slot[h] = s1;
+}
+
+/* (backward-shift deletion, as src/xsp.c hash_remove) */
+static void sof_del(u16 c)
+{
+    u8 h = sof_home(c), j, k;
+    while (sof_key[h] != c + 1) {
+        if (!sof_key[h])
+            return;
+        h = (h + 1) & (SOF_SIZE - 1);
+    }
+    for (j = h;;) {
+        j = (j + 1) & (SOF_SIZE - 1);
+        if (!sof_key[j])
+            break;
+        k = sof_home(sof_key[j] - 1);
+        if (h <= j ? (k > h && k <= j) : (k > h || k <= j))
+            continue;
+        sof_key[h] = sof_key[j];
+        sof_slot[h] = sof_slot[j];
+        h = j;
+    }
+    sof_key[h] = 0;
+}
+
 static void comp_release(u8 near, u8 far)
 {
     u8 i, m, fx = bs->far_ix[far];
@@ -97,7 +148,7 @@ static void comp_release(u8 near, u8 far)
     for (i = 0; i < 16; i++) {
         m = bs->near_mix[near * 16 + i];
         if (m && (c = bs->comp[(m - 1) * bs->nfar + fx]) != 0) {
-            u8 s = slot_of[(c & 0x1FFF) - 1];
+            u8 s = slot_of((c & 0x1FFF) - 1);
             if (s && slot_ref[s - 1])
                 slot_ref[s - 1]--;
         }
@@ -107,7 +158,7 @@ static void comp_release(u8 near, u8 far)
 /* composite c (1-based) -> VRAM tile, 0 if the pool is full */
 static u16 comp_get(u16 c)
 {
-    u8 s = slot_of[c - 1], n;
+    u8 s = slot_of(c - 1), n;
     if (s) {
         slot_ref[s - 1]++;
         return slot_tile(s - 1);
@@ -124,9 +175,9 @@ static u16 comp_get(u16 c)
         return 0;
     }
     if (slot_comp[s] != 0xFFFF)
-        slot_of[slot_comp[s]] = 0;
+        sof_del(slot_comp[s]);
     slot_comp[s] = c - 1;
-    slot_of[c - 1] = s + 1;
+    sof_put(c - 1, s + 1);
     slot_ref[s] = 1;
     {
         u16 k, used = 0;
@@ -245,8 +296,8 @@ static void set_select(u8 st)
         slot_comp[k] = 0xFFFF;
         slot_ref[k] = 0;
     }
-    for (k = 0; k < BG_NCOMP_MAX; k++)
-        slot_of[k] = 0;
+    for (k = 0; k < SOF_SIZE; k++)
+        sof_key[k] = 0;
     for (k = 0; k < 16 * 8; k++)
         (&cell_far[0][0])[k] = 0xFF;        /* (nothing to release) */
     xsp_cache_layout(1 + bs->ntiles);       /* the sprite cache follows the set's tiles */
