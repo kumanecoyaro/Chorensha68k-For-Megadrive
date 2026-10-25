@@ -23,6 +23,9 @@
     .set    PLAYER_HI, 0xAD5
     .set    PLAYER_ROOM, 4                  | sprites kept free for the player after $3F
     .set    ENEMY_PR, 0x34                  | the enemies
+    .set    VLASER_A, 0x50                  | vertical laser segments (thick, thin): pairs
+    .set    VLASER_B, 0x59                  | one above the other become one ref
+    .set    VLASER_REF, NREF - 2            | (tools/convert_sprites.py VLASER_PCGS)
     .set    ENEMY_ROOM, 16                  | sprites the enemy bullets leave them at most
     .set    EFFECT_LO, 0x0B5                | expl2 .. expl4
     .set    EFFECT_HI, 0x210
@@ -97,6 +100,10 @@ h_xsp_set_obj:
 | xsp_set_vec (RAM): h_xsp_set_main, or h_xsp_set_boss while a boss or a mid
 | boss is about (src/xsp.c xsp_pairs): their lasers paired
 h_xsp_set_boss:
+    cmp.w   #VLASER_A, %d2              | (vertical: merged by h_xsp_set_main)
+    beq.s   h_xsp_set_main
+    cmp.w   #VLASER_B, %d2
+    beq.s   h_xsp_set_main
     move.w  %d2, %a0
     sub.w   #LASER_LO, %a0
     cmp.w   #LASER_HI - LASER_LO, %a0
@@ -107,12 +114,18 @@ h_xsp_set_main:
     cmp.w   #0x4400, %d1
     bcc     9f
     cmp.w   #NPCG, %d2
-    bcc.s   8f
+    bcc     8f
     cmp.w   #DEBRIS_LO, %d2             | debris.sp PCGs (particles): not drawn
     bcs.s   1f
     cmp.w   #DEBRIS_HI, %d2
     bcs.s   8f
-1:  move.l  %d4, -(%sp)                | (only d0 / a0 are free)
+1:  cmp.w   #VLASER_B, %d2             | (most PCGs above: one compare)
+    bhi.s   29f
+    cmp.w   #VLASER_B, %d2
+    beq     30f
+    cmp.w   #VLASER_A, %d2
+    beq     30f
+29: move.l  %d4, -(%sp)                | (only d0 / a0 are free)
     move.w  ncalls, %d4
     cmp.w   #MAX_CALLS, %d4
     bcc.s   7f
@@ -233,6 +246,47 @@ pr_map:
     rts
 25: movem.l (%sp)+, %d4-%d6/%a1
     bra     h_xsp_set_main
+
+| a vertical laser segment (the lasers fired straight down): 16 px above or
+| below the last call of its priority, the same PCG, info and x: the two
+| become one call of a synthetic ref (VLASER_REF: one 16 x 32 sprite,
+| tools/convert_sprites.py), at the upper one's position
+30: movem.l %d4-%d5/%a1, -(%sp)
+    moveq   #63, %d4
+    and.w   %d3, %d4
+    lea     bhead, %a0
+    moveq   #0, %d5
+    move.b  0(%a0,%d4.w), %d5
+    cmp.b   #0xFF, %d5
+    beq.s   39f
+    lsl.w   #3, %d5
+    lea     calls, %a1
+    add.w   %d5, %a1
+    move.w  %d2, %d5
+    bset    #15, %d5
+    cmp.w   4(%a1), %d5                 | the same PCG (not merged yet)
+    bne.s   39f
+    cmp.w   6(%a1), %d3                 | the same info
+    bne.s   39f
+    cmp.w   (%a1), %d0                  | the same x
+    bne.s   39f
+    move.w  2(%a1), %d5
+    sub.w   %d1, %d5
+    cmp.w   #16 * 64, %d5
+    beq.s   31f                         | the last one 16 px below: this one is the upper
+    cmp.w   #-16 * 64, %d5
+    bne.s   39f
+    bra.s   32f
+31: move.w  %d1, 2(%a1)
+32: move.w  #VLASER_REF, 4(%a1)
+    cmp.w   #VLASER_A, %d2
+    beq.s   33f
+    addq.w  #1, 4(%a1)                  | (the thin one)
+33: movem.l (%sp)+, %d4-%d5/%a1
+    moveq   #1, %d0
+    rts
+39: movem.l (%sp)+, %d4-%d5/%a1
+    bra     29b
 
 | xobj_set (the original clobbers d0-d4/a0-a2)
 | Sprite budget (64 per frame): the player ship is drawn before everything

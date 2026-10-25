@@ -97,6 +97,7 @@ MERGE_MIN = 1          # refs with more frm entries are composited into blocks o
                        # (a 32x32 enemy made of four 16x16 PCGs becomes one hardware sprite)
 # effects made of many scattered / mirrored PCGs: compositing them would cost
 # megabytes of ROM, so they keep one hardware sprite per PCG
+VLASER_PCGS = (0x50, 0x59)   # the vertical laser segments, thick / thin: refs NREF - 2, NREF - 1
 NO_MERGE = {'debris1', 'debris2', 'expl4', 'sonic1', 'sonic2', 'ele_arc'}
 
 def md_rgb(c):
@@ -182,6 +183,31 @@ def main(xsp, out):
     pieces = []; ref_start = []
     per_file = []
     ref_first = {}; ref_src = []
+    def emit(groups):
+        for palx, pix in groups.items():
+            if not pix:
+                continue
+            for v in pix.values():
+                idx_freq[v] += 1
+            xs = [p[0] for p in pix]; ys = [p[1] for p in pix]
+            x0, y0 = min(xs), min(ys)
+            tw = (max(xs) - x0) // 8 + 1; th = (max(ys) - y0) // 8 + 1
+            def tile(tx, ty):
+                t = [pix.get((x0 + tx * 8 + x, y0 + ty * 8 + y), 0) for y in range(8) for x in range(8)]
+                return t if any(t) else None
+            grid = {(tx, ty): tile(tx, ty) for tx in range(tw) for ty in range(th)}
+            for by in range(0, th, 4):
+                for bx in range(0, tw, 4):
+                    cells = [c for c in grid if bx <= c[0] < bx + 4 and by <= c[1] < by + 4 and grid[c]]
+                    if not cells:
+                        continue
+                    cx0 = min(c[0] for c in cells); cx1 = max(c[0] for c in cells)
+                    cy0 = min(c[1] for c in cells); cy1 = max(c[1] for c in cells)
+                    w = cx1 - cx0 + 1; h = cy1 - cy0 + 1
+                    data = b''.join(tile_bytes(grid[(tx, ty)] or [0] * 64)
+                                    for tx in range(cx0, cx1 + 1) for ty in range(cy0, cy1 + 1))
+                    b = blocks.add(w, h, data)
+                    pieces.append((x0 + cx0 * 8, y0 + cy0 * 8, ((w - 1) << 2) | (h - 1), b, palx >> 8))
     for name, base in reflist:
         ref_first[name] = len(ref_start)
         before = len(blocks.data)
@@ -216,30 +242,18 @@ def main(xsp, out):
                         if v:
                             # relative to the object centre (sprite coordinate x>>6 is centre + 8)
                             g[(ax - 16 + x, ay - 16 + y)] = v
-            for palx, pix in groups.items():
-                if not pix:
-                    continue
-                for v in pix.values():
-                    idx_freq[v] += 1
-                xs = [p[0] for p in pix]; ys = [p[1] for p in pix]
-                x0, y0 = min(xs), min(ys)
-                tw = (max(xs) - x0) // 8 + 1; th = (max(ys) - y0) // 8 + 1
-                def tile(tx, ty):
-                    t = [pix.get((x0 + tx * 8 + x, y0 + ty * 8 + y), 0) for y in range(8) for x in range(8)]
-                    return t if any(t) else None
-                grid = {(tx, ty): tile(tx, ty) for tx in range(tw) for ty in range(th)}
-                for by in range(0, th, 4):
-                    for bx in range(0, tw, 4):
-                        cells = [c for c in grid if bx <= c[0] < bx + 4 and by <= c[1] < by + 4 and grid[c]]
-                        if not cells:
-                            continue
-                        cx0 = min(c[0] for c in cells); cx1 = max(c[0] for c in cells)
-                        cy0 = min(c[1] for c in cells); cy1 = max(c[1] for c in cells)
-                        w = cx1 - cx0 + 1; h = cy1 - cy0 + 1
-                        data = b''.join(tile_bytes(grid[(tx, ty)] or [0] * 64)
-                                        for tx in range(cx0, cx1 + 1) for ty in range(cy0, cy1 + 1))
-                        b = blocks.add(w, h, data)
-                        pieces.append((x0 + cx0 * 8, y0 + cy0 * 8, ((w - 1) << 2) | (h - 1), b, palx >> 8))
+            emit(groups)
+    # synthetic refs (src/xsp_fast.s h_xsp_set_main): two vertical laser segments
+    # one above the other (the lasers fired straight down) as one 16 x 32 sprite
+    for p in VLASER_PCGS:
+        ref_start.append(len(pieces))
+        px = pcg16(pcg, p)
+        g = {}
+        for y in range(16):
+            for x in range(16):
+                if px[y * 16 + x]:
+                    g[(x - 16, y - 16)] = g[(x - 16, y)] = px[y * 16 + x]
+        emit({0: g})
     ref_start.append(len(pieces))
     nref = len(ref_start) - 1
     if os.environ.get('SPR_STATS'):
