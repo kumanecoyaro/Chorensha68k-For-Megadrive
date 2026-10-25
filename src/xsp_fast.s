@@ -365,7 +365,9 @@ h_xobj_set:
     bcc.s   2f
     moveq   #0x3E, %d4                  | player: in front of enemies, bullets ($3C)
     bra.s   8f
-2:  cmp.w   #EFFECT_LO, %d2
+2:  cmp.w   #3, %d2                     | refs 1-3 (the stage 3 boss's thick beams):
+    bls     40f                         | two side by side as one (below)
+    cmp.w   #EFFECT_LO, %d2
     bcs.s   8f
     cmp.w   #PARTICLE_HI, %d2
     bcc.s   8f
@@ -409,6 +411,52 @@ h_xobj_set:
     move.b  %d0, 0(%a0,%d1.w)
     addq.w  #1, pl_n
 9:  rts
+| a beam flame (ref 1-3, 16 x 32) next to the same one 16 px to the left or
+| right at the same height, among the last 4 calls of its priority: the two
+| become one call of LBEAM_REF + ref - 1 (32 x 32, tools/convert_sprites.py
+| LBEAM_REFS) at the left one's position
+40: tst.w   %d2
+    beq     8b
+    move.l  %d5, -(%sp)
+    lea     bhead, %a0
+    moveq   #0, %d5
+    move.b  0(%a0,%d4.w), %d5
+    swap    %d5
+    move.w  #3, %d5                     | (high word: the count)
+    swap    %d5
+41: cmp.b   #0xFF, %d5
+    beq.s   48f
+    move.w  %d5, %a1
+    lsl.w   #3, %d5
+    lea     calls, %a0
+    add.w   %d5, %a0
+    cmp.w   4(%a0), %d2
+    bne.s   45f
+    cmp.w   6(%a0), %d3
+    bne.s   45f
+    cmp.w   2(%a0), %d1                 | the same height
+    bne.s   45f
+    move.w  (%a0), %d5
+    sub.w   %d0, %d5
+    asr.w   #6, %d5
+    cmp.w   #16, %d5
+    beq.s   43f                         | this one on the left
+    cmp.w   #-16, %d5
+    beq.s   44f
+45: move.w  %a1, %d5
+    lea     call_next, %a0
+    move.b  0(%a0,%d5.w), %d5
+    and.w   #0xFF, %d5
+    sub.l   #0x10000, %d5
+    bpl.s   41b
+48: move.l  (%sp)+, %d5
+    bra     8b
+43: move.w  %d0, (%a0)
+44: add.w   #LBEAM_REF - 1, %d2
+    move.w  %d2, 4(%a0)
+    move.l  (%sp)+, %d5
+    rts
+
 
 | void xsp_call(s16 x, s16 y, u16 id, u16 info) for C (text cells)
 xsp_call:
