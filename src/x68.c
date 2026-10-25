@@ -140,6 +140,7 @@ long x_vsync(long n)
                     OW(0x4d39e + k * 0x80 + 0x5c) = 1;
     }
 #endif
+    bg_stage_check();
     waited = frame_ready;
     PROBE(0);
     return waited;

@@ -14,6 +14,13 @@
  *     at that moment, moved by a multiple of the far pattern's period so the
  *     far layer stays continuous from row to row (the far maps are mostly
  *     repeating patterns).
+ *
+ * Each converted stage has its own BG set (tiles, palettes 0 / 1, chip and
+ * composite tables: tools/convert_assets.py).  The map scrolls on from one
+ * stage into the next; the next stage's set (which also covers the rows of
+ * the previous stage still on screen) is switched in while its palette fades
+ * in (bg_stage_check), with the display off for the tile upload, and every
+ * cell is merged again.
  */
 #include "game.h"
 #include "vdp.h"
@@ -42,7 +49,10 @@ static s8 far_d;                            /* far row - near row */
 static u8 last_p = 0xFF;
 
 /* composite tile pool */
-static u8 slot_of[BG_NCOMP];                /* composite -> slot + 1, 0 = not loaded */
+static const BgSet *bs = &bg_sets[0];
+static u8 bs_stage = 1;                     /* stage of the set in use */
+static volatile u8 bs_pending;              /* VBlank: upload the set's tiles and palettes */
+static u8 slot_of[BG_NCOMP_MAX];                /* composite -> slot + 1, 0 = not loaded */
 static u16 slot_comp[COMP_SLOTS];
 static u8 slot_ref[COMP_SLOTS];
 static u8 slot_clock;
@@ -78,13 +88,13 @@ static void irq_on(void)  { __asm__ volatile("move.w #0x2500, %sr"); }
 /* ------------------------------------------------------------ composites */
 static void comp_release(u8 near, u8 far)
 {
-    u8 i, m, fx = bg_far_ix[far];
+    u8 i, m, fx = bs->far_ix[far];
     u16 c;
     if (fx == 0xFF)
         return;
     for (i = 0; i < 16; i++) {
-        m = bg_near_mix[near * 16 + i];
-        if (m && (c = bg_comp[(m - 1) * BG_NFAR + fx]) != 0) {
+        m = bs->near_mix[near * 16 + i];
+        if (m && (c = bs->comp[(m - 1) * bs->nfar + fx]) != 0) {
             u8 s = slot_of[(c & 0x1FFF) - 1];
             if (s && slot_ref[s - 1])
                 slot_ref[s - 1]--;
@@ -157,17 +167,17 @@ static u8 far_row_for(u8 p)
  * (the cell's previous composites must have been released) */
 static void merge_cell(u8 p, u8 c)
 {
-    u8 n = near_sh[p][c], f = far_sh[row_far[p]][c], fx = bg_far_ix[f], i, m;
-    const u16 *nw = chip_near + n * 16, *fw = chip_far + f * 16;
+    u8 n = near_sh[p][c], f = far_sh[row_far[p]][c], fx = bs->far_ix[f], i, m;
+    const u16 *nw = bs->chip_near + n * 16, *fw = bs->chip_far + f * 16;
     u16 *w;
     while (chipq_n >= CHIPQ)                /* (full redraws: let VBlank drain it) */
         ;
     cell_far[p][c] = f;
     w = chipq[chipq_n].w;
     for (i = 0; i < 16; i++) {
-        m = bg_near_mix[n * 16 + i];
+        m = bs->near_mix[n * 16 + i];
         if (m) {
-            u16 cw = fx == 0xFF ? 0 : bg_comp[(m - 1) * BG_NFAR + fx], t;
+            u16 cw = fx == 0xFF ? 0 : bs->comp[(m - 1) * bs->nfar + fx], t;
             w[i] = nw[i];
             if (cw && (t = comp_get(cw & 0x1FFF)) != 0)
                 w[i] = (cw & 0xE000) | t;
@@ -180,12 +190,21 @@ static void merge_cell(u8 p, u8 c)
     irq_on();
 }
 
+#ifdef TEST_BGLOG
+u8 bglog[4][2][32];                         /* chips drawn per stage & 3, layer */
+#endif
 /* fn_301f6(pcg, chip_ptr, layer, x, y): chip_ptr = B_8824a + set * $2000 + chip * 32 */
 long x_bg_chip(long pcg, long chip_ptr, long layer, long x, long y)
 {
     u8 chip = (u8)((chip_ptr - OADDR(0x8824a)) >> 5);
     u8 p = ((u16)y >> 5) & 15, c = ((u16)x >> 5) & 7;
     (void)pcg;
+#ifdef TEST_BGLOG
+    {
+        u8 st = OW(0x4a0ee) & 7;
+        bglog[st & 3][layer & 1][chip >> 3] |= 1 << (chip & 7);
+    }
+#endif
     if (layer & 1) {
         far_sh[p][c] = chip;
         return 0;
@@ -200,13 +219,40 @@ long x_bg_chip(long pcg, long chip_ptr, long layer, long x, long y)
     return 0;
 }
 
-/* fn_05574 (full redraw of both pages, near layer first): then merge every
- * near cell again over the far layer now in place */
-long orig_05574(void);
-long x_bg_full(void)
+/* ------------------------------------------------------------ BG sets */
+/* the current stage (B_4a0ee: 1..) -> its set (the last one past the converted stages) */
+static u8 cur_stage(void)
+{
+    u8 st = OW(0x4a0ee) & 7;
+    return st < 1 ? 1 : st > BG_NSETS ? BG_NSETS : st;
+}
+
+/* make stage st's set the current one: the composite pool is emptied, the
+ * tiles and palettes go up in the next VBlank (before any chip write) */
+static void set_select(u8 st)
+{
+    u16 k;
+    irq_off();
+    bs = &bg_sets[st - 1];
+    bs_stage = st;
+    chipq_n = 0;
+    upq_n = 0;
+    bs_pending = 1;
+    irq_on();
+    for (k = 0; k < COMP_SLOTS; k++) {
+        slot_comp[k] = 0xFFFF;
+        slot_ref[k] = 0;
+    }
+    for (k = 0; k < BG_NCOMP_MAX; k++)
+        slot_of[k] = 0;
+    for (k = 0; k < 16 * 8; k++)
+        (&cell_far[0][0])[k] = 0xFF;        /* (nothing to release) */
+}
+
+/* every near cell merged again over the far layer in place */
+static void merge_all(void)
 {
     u8 p, c;
-    ocall(orig_05574, 0, 0, 0, 0);
     far_d = 0;
     last_p = 0xFF;
     for (p = 0; p < 16; p++) {
@@ -216,7 +262,47 @@ long x_bg_full(void)
             merge_cell(p, c);
         }
     }
+}
+
+/* fn_05574 (full redraw of both pages, near layer first, at a game start):
+ * with the current stage's set, then merge every near cell again over the
+ * far layer now in place */
+long orig_05574(void);
+long x_bg_full(void)
+{
+    u8 st;
+#ifdef TEST_STAGE
+    if ((OW(0x4a0ee) & 7) == 1) {           /* (debug) the game starts at stage TEST_STAGE */
+        OW(0x4a0ee) += TEST_STAGE - 1;
+        ocall(OFN(0x05906), (TEST_STAGE - 1) * 8, 0x10, 0, 0);
+    }
+#endif
+    st = cur_stage();
+    if (st != bs_stage)
+        set_select(st);
+    ocall(orig_05574, 0, 0, 0, 0);
+    merge_all();
     return 0;
+}
+
+/* once a frame (x_vsync): a new stage switches its set in while its palette
+ * fades in (stage script state $100, timer $40 of the $80-frame fade
+ * fn_0479a, the screen then shows the end of the previous stage's map
+ * and the start of the new one).  Back to an earlier stage (after the last
+ * converted one, tools/relocate.py): the map restarts at the stage's first
+ * segment, as at a game start (fn_05906, full redraw). */
+void bg_stage_check(void)
+{
+    u8 st = cur_stage();
+    if (st == bs_stage || OW(0x59328) != 0x100)
+        return;
+    if (st < bs_stage) {
+        ocall(OFN(0x05906), (st - 1) * 8, 0x10, 0, 0);
+        x_bg_full();
+    } else if (OW(0x59326) >= 0x40) {
+        set_select(st);
+        merge_all();
+    }
 }
 
 /* the original's graphic screen on / off (IOCS $B2, x_screen_clear): off
@@ -238,12 +324,26 @@ void bg_reset(void)
     irq_on();
 }
 
-/* VBlank: composite tiles, then the queued chips */
+void dma_rom(u16 vram, const u32 *src, u16 words);
+void sound_dma(u8 on);
+
+/* VBlank: a new set's tiles and palettes (display off: longer than the
+ * VBlank), composite tiles, then the queued chips */
 void bg_chips(void)
 {
-    u8 i, r, n = upq_n;
+    u8 i, r, n;
+    if (bs_pending) {
+        vdp_display(0);
+        sound_dma(1);
+        dma_rom(32, bs->tiles, bs->ntiles * 16);
+        sound_dma(0);
+        vdp_set_palettes(bs->pal, 32);
+        vdp_display(1);
+        bs_pending = 0;
+    }
+    n = upq_n;
     for (i = 0; i < n; i++) {
-        const u32 *t = bg_comp_tiles + upq[i].comp * 8;
+        const u32 *t = bs->comp_tiles + upq[i].comp * 8;
         VDP_CTRL32 = VRAM_W(upq[i].vram);
         for (r = 0; r < 8; r++)
             VDP_DATA32 = t[r];

@@ -97,6 +97,9 @@ static void hash_remove(u16 h)
 #define MESH_MAX  64                    /* open addressing by block: block + 1, 0 = free */
 static u16 mesh_blk[MESH_MAX];
 
+#ifdef TEST_KEYLOG
+u16 keylog[256], keylog_n;
+#endif
 /* called by xsp_fast.s when (block, palette) is not in VRAM */
 u16 cache_miss(u16 key)
 {
@@ -121,6 +124,10 @@ u16 cache_miss(u16 key)
         if (lo < nk && keys[lo] == k)
             rom = (mesh ? mesh_off : pre_off)[lo];
     }
+#ifdef TEST_KEYLOG
+    if (rom < 0 && !mesh)                   /* (debug) CPU-converted keys, read from RAM dumps */
+        keylog[keylog_n++ & 255] = key;
+#endif
     if (nup >= MAX_UP || (rom >= 0 ? rom_len + n * 32 > ROM_BYTES : stage_len + n * 32 > STAGE_BYTES)) {
         xsp_fail++;
         return 0;

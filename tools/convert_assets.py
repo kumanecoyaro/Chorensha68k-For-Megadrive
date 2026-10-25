@@ -3,19 +3,34 @@
 
 usage: convert_assets.py SZ2.X XSP_DAT_DIR OUT_DIR
 
-Produces OUT_DIR/assets.c and OUT_DIR/assets.h containing:
+Produces OUT_DIR/assets.c and OUT_DIR/assets.h containing one BG set per
+converted stage (src/bg.c switches them):
   * MD palettes 0 / 1 (far / near BG layer; 2 / 3 come from convert_sprites.py)
   * BG tiles and the chip tables (32x32 px chips as 4x4 MD name-table words)
     used when the original code draws a chip (the maps themselves are read by
     the original code, see tools/relocate.py)
+  * the near-over-far composite tiles
 """
 import os, struct, sys, collections
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from xfile import XFile
 from x68gfx import load_pal, tile8, pcg16, load_chips, load_map, chip_pixels
 
-STAGE1_ROWS = range(700, 1024)          # map rows reached by stage 1 (row 1023 -> 766)
-BG_PAL_FILE = 'bg_fb_nw.pal'
+# The map scrolls on from stage to stage (rows decreasing).  A stage's script
+# loops 16-row segments (fn_058de(seg, $10): rows 1024 - 16 * (seg + 1) ..
+# 1023 - 16 * seg): stage n loops segments 8n - 8 .. 8n (its clear), the next
+# one starts at its own 8n.  A set covers the rows a stage shows, from the
+# previous stage's last segments (on screen when the set is switched in,
+# src/bg.c) to one segment past its clear.  Palettes: B_4a31c + (n - 1) * $200
+# (fn_053ba loads the files of D_3d558 in this order).
+STAGES = [
+    ('bg_fb_nw.pal', range(0, 10)),     # stage 1
+    ('bg_fy_np.pal', range(7, 18)),     # stage 2
+]
+BG_TILE_MAX = 402                       # VRAM tiles 1..401 (src/xsp.c: the sprite cache follows)
+
+def seg_rows(segs):
+    return [r for s in segs for r in range(1024 - 16 * (s + 1), 1024 - 16 * s)]
 
 def md_rgb(c):
     return tuple(min(7, (v * 7 + 127) // 255) for v in c)
@@ -81,23 +96,13 @@ class TileSet:
         return self.index[data]
 
 # ---------------------------------------------------------------- main
-def main(xpath, xsp_dir, out_dir):
-    x = XFile(xpath)
-    img = bytes(x.image)
-    os.makedirs(out_dir, exist_ok=True)
-    A = lambda n: os.path.join(xsp_dir, n)
-
-    bgpal = load_pal(A(BG_PAL_FILE))
-    sppal = load_pal(A('SZ_PALET.pal'))
-    chips = load_chips(A('map.chp'))
-    bgpcg = open(A('bg_pcg.sp'), 'rb').read()
-    _, _, m0 = load_map(A('map.bg0'))
-    _, _, m1 = load_map(A('map.bg1'))
+def convert_stage(palfile, rows, chips, bgpcg, m0, m1, A):
+    bgpal = load_pal(A(palfile))
 
     # ---- palettes
     g_far, g_near = PalGroup('far'), PalGroup('near')
-    used0 = collections.Counter(m0[r * 8 + c] for r in STAGE1_ROWS for c in range(8))
-    used1 = collections.Counter(m1[r * 8 + c] for r in STAGE1_ROWS for c in range(8))
+    used0 = collections.Counter(m0[r * 8 + c] for r in rows for c in range(8))
+    used1 = collections.Counter(m1[r * 8 + c] for r in rows for c in range(8))
     cpix = {}
     for ch in set(used0) | set(used1):
         cpix[ch] = chip_pixels(chips[ch], bgpcg)
@@ -107,11 +112,6 @@ def main(xpath, xsp_dir, out_dir):
                 if v:
                     g.add(bgpal[v], n)
     g_far.build(); g_near.build()
-
-    # sprite palettes 2 / 3 come from tools/convert_sprites.py
-    g_a, g_b = PalGroup('sprA'), PalGroup('sprB')
-    g_a.colors = g_b.colors = []
-    groups = [g_far, g_near, g_a, g_b]
 
     # ---- BG tiles + chips (MD palette 0 = far layer, 1 = near layer)
     bgtiles = TileSet(base=1)            # tile 0 = blank
@@ -128,7 +128,7 @@ def main(xpath, xsp_dir, out_dir):
         return words
     chip_near = {ch: chip_words(ch, g_near, 1) for ch in sorted(used0)}
     chip_far = {ch: chip_words(ch, g_far, 0) for ch in sorted(used1)}
-    nbg = 1 + len(bgtiles.tiles)
+    assert 1 + len(bgtiles.tiles) <= BG_TILE_MAX, (palfile, len(bgtiles.tiles))
 
     # ---- one BG plane: near layer over far layer (src/bg.c).  A near tile
     # is opaque (shown as is), empty (the far tile shows) or mixed: mixed
@@ -178,53 +178,74 @@ def main(xpath, xsp_dir, out_dir):
                     row.append((mdpal << 13) | (t + 1))
                 comp.append(row)
             near_mix[ch * 16 + i] = mixed[key] + 1
-    print(f'BG merge: {len(mixed)} mixed near tiles x {len(far_list)} far chips -> {len(comp_tiles.tiles)} composite tiles')
+    print(f'{palfile}: BG tiles {1 + len(bgtiles.tiles)}, {len(mixed)} mixed near tiles x {len(far_list)} far chips'
+          f' -> {len(comp_tiles.tiles)} composite tiles; colors far {len(g_far.count)} -> {len(g_far.colors)},'
+          f' near {len(g_near.count)} -> {len(g_near.colors)}')
+    cn, cf = [], []
+    for ch in range(256):                      # by original chip number, unused -> 0
+        cn += chip_near.get(ch, [0] * 16)
+        cf += chip_far.get(ch, [0] * 16)
+    return dict(pal=g_far.cram() + g_near.cram(), tiles=b''.join(bgtiles.tiles), chip_near=cn, chip_far=cf,
+                far_ix=far_ix, near_mix=near_mix, comp=sum(comp, []), nfar=len(far_list),
+                comp_tiles=b''.join(comp_tiles.tiles), ncomp=len(comp_tiles.tiles))
 
-    print(f'BG tiles {nbg}')
+def main(xpath, xsp_dir, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
+    A = lambda n: os.path.join(xsp_dir, n)
+    chips = load_chips(A('map.chp'))
+    bgpcg = open(A('bg_pcg.sp'), 'rb').read()
+    _, _, m0 = load_map(A('map.bg0'))
+    _, _, m1 = load_map(A('map.bg1'))
+    sets = [convert_stage(pf, seg_rows(segs), chips, bgpcg, m0, m1, A) for pf, segs in STAGES]
     font_base = 0xF000 // 32           # VRAM 0xF000-0xFFFF: text font (convert_sprites.py)
 
     # ---------------------------------------------------------------- write C
     def arr(ctype, name, vals, per=16, fmt='{}'):
-        s = [f'const {ctype} {name}[{len(vals)}] = {{']
+        s = [f'{ctype} {name}[{len(vals)}] = {{']
         for i in range(0, len(vals), per):
             s.append('  ' + ', '.join(fmt.format(v) for v in vals[i:i + per]) + ',')
         s.append('};')
         return '\n'.join(s)
+    words = lambda b: list(struct.unpack(f'>{len(b) // 4}I', b))
     out = ['/* generated by tools/convert_assets.py from Chorensha68k data - do not edit */',
            '#include "assets.h"', '']
-    out.append(arr('u16', 'pal_data', sum((g.cram() for g in groups), []), fmt='0x{:03x}'))
-    alltiles = b''.join(bgtiles.tiles)
-    out.append(arr('u32', 'bg_tiles', list(struct.unpack(f'>{len(alltiles)//4}I', alltiles)), 8, '0x{:08x}'))
-    # chips: index by original chip number (256 entries x 16 words), unused -> 0
-    cw = []
-    for ch in range(256):
-        cw += chip_near.get(ch, [0] * 16)
-    out.append(arr('u16', 'chip_near', cw, fmt='0x{:04x}'))
-    cw = []
-    for ch in range(256):
-        cw += chip_far.get(ch, [0] * 16)
-    out.append(arr('u16', 'chip_far', cw, fmt='0x{:04x}'))
-    out.append(arr('u8', 'bg_far_ix', far_ix))
-    out.append(arr('u8', 'bg_near_mix', near_mix))
-    out.append(arr('u16', 'bg_comp', sum(comp, []), fmt='0x{:04x}'))
-    ct = b''.join(comp_tiles.tiles)
-    out.append(arr('u32', 'bg_comp_tiles', list(struct.unpack(f'>{len(ct)//4}I', ct)), 8, '0x{:08x}'))
+    # boot palettes: stage 1's BG palettes, sprite palettes 2 / 3 (tools/convert_sprites.py) later
+    out.append(arr('const u16', 'pal_data', sets[0]['pal'] + [0] * 32, fmt='0x{:03x}'))
+    for k, st in enumerate(sets):
+        out.append(arr('static const u16', f'bg_pal_{k}', st['pal'], fmt='0x{:03x}'))
+        out.append(arr('static const u32', f'bg_tiles_{k}', words(st['tiles']) or [0], 8, '0x{:08x}'))
+        out.append(arr('static const u16', f'chip_near_{k}', st['chip_near'], fmt='0x{:04x}'))
+        out.append(arr('static const u16', f'chip_far_{k}', st['chip_far'], fmt='0x{:04x}'))
+        out.append(arr('static const u8', f'bg_far_ix_{k}', st['far_ix']))
+        out.append(arr('static const u8', f'bg_near_mix_{k}', st['near_mix']))
+        out.append(arr('static const u16', f'bg_comp_{k}', st['comp'] or [0], fmt='0x{:04x}'))
+        out.append(arr('static const u32', f'bg_comp_tiles_{k}', words(st['comp_tiles']) or [0], 8, '0x{:08x}'))
+    out.append(f'const BgSet bg_sets[{len(sets)}] = {{')
+    for k, st in enumerate(sets):
+        out.append(f'  {{bg_pal_{k}, bg_tiles_{k}, {len(st["tiles"]) // 32}, chip_near_{k}, chip_far_{k},'
+                   f' bg_far_ix_{k}, bg_near_mix_{k}, bg_comp_{k}, bg_comp_tiles_{k}, {st["nfar"]}, {st["ncomp"]}}},')
+    out.append('};')
     open(os.path.join(out_dir, 'assets.c'), 'w').write('\n'.join(out) + '\n')
 
     h = ['/* generated by tools/convert_assets.py - do not edit */',
          '#ifndef ASSETS_H', '#define ASSETS_H', '#include "types.h"', '',
-         f'#define BG_TILE_COUNT {nbg}', f'#define FONT_TILE_BASE {font_base}', '']
-    h += ['', 'extern const u16 pal_data[64];',
-          f'extern const u32 bg_tiles[{len(alltiles)//4}];',
-          'extern const u16 chip_near[4096];', 'extern const u16 chip_far[4096];',
-          f'#define BG_NFAR {len(far_list)}', f'#define BG_NMIX {len(comp)}', f'#define BG_NCOMP {len(comp_tiles.tiles)}',
-          'extern const u8 bg_far_ix[256];', 'extern const u8 bg_near_mix[4096];',
-          f'extern const u16 bg_comp[{len(comp) * len(far_list)}];',
-          f'extern const u32 bg_comp_tiles[{len(ct)//4}];',
-          '#endif']
+         f'#define BG_TILE_COUNT {BG_TILE_MAX}   /* VRAM tiles 1..{BG_TILE_MAX - 1}: the BG set in use */',
+         f'#define FONT_TILE_BASE {font_base}', '',
+         '/* one stage\'s BG (src/bg.c): MD palettes 0 / 1, tiles (from VRAM tile 1), chip words by',
+         '   original chip number (near / far layer), composites of mixed near tiles over far chips */',
+         'typedef struct {',
+         '    const u16 *pal; const u32 *tiles; u16 ntiles;',
+         '    const u16 *chip_near, *chip_far;',
+         '    const u8 *far_ix, *near_mix;      /* far chip -> index (0xFF: none), near tile -> mixed + 1 */',
+         '    const u16 *comp; const u32 *comp_tiles;   /* comp[(mixed) * nfar + far index] */',
+         '    u16 nfar, ncomp;',
+         '} BgSet;',
+         f'#define BG_NSETS {len(sets)}',
+         f'#define BG_NCOMP_MAX {max(st["ncomp"] for st in sets)}',
+         'extern const u16 pal_data[64];',
+         f'extern const BgSet bg_sets[{len(sets)}];',
+         '#endif']
     open(os.path.join(out_dir, 'assets.h'), 'w').write('\n'.join(h) + '\n')
-    for g in groups[:2]:
-        print(g.name, len(g.count), 'colors ->', len(g.colors))
 
 if __name__ == '__main__':
     main(*sys.argv[1:4])

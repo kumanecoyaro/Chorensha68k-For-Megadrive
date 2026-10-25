@@ -95,7 +95,7 @@ int main(void)
 {
     vdp_init();
     vdp_set_palettes(pal_data, 64);
-    vdp_load_tiles(1, bg_tiles, BG_TILE_COUNT - 1);
+    vdp_load_tiles(1, bg_sets[0].tiles, bg_sets[0].ntiles);
     sound_init();
     xsp_init();
     text_map_set(0);

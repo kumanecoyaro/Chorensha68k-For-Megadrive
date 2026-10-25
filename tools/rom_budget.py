@@ -8,7 +8,6 @@ unpacks assets.tgz into RAM; the Mega Drive has 64 KB of RAM).
 """
 import os, sys, subprocess
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from x68gfx import load_chips
 
 LIMIT = 4 * 1024 * 1024
 
@@ -34,13 +33,15 @@ def main(build, rom):
     bgm = int(open(os.path.join(gen, 'bgm.h')).read().split('BGM_DATA_SIZE')[1].split()[0])
     spr_tables = sum(syms.get(s, 0) for s in ('pcg_block', 'ref_start', 'ref_pieces', 'spr_blocks', 'pal_lut',
                                                'spr_cram', 'pal_slot', 'text_font'))
-    bg = sum(syms.get(s, 0) for s in ('bg_tiles', 'chip_near', 'chip_far', 'map_bg0', 'map_bg1', 'pal_data'))
+    bgset = ('bg_pal_', 'bg_tiles_', 'chip_near_', 'chip_far_', 'bg_far_ix_', 'bg_near_mix_', 'bg_comp_')
+    bg = sum(v for k, v in syms.items() if k.startswith(bgset) or k in ('bg_sets', 'pal_data'))
+    nsets = int(open(os.path.join(gen, 'assets.h')).read().split('BG_NSETS')[1].split()[0])
     rows = [('original program (SZ2.X text + data, relocated)', size('orig.bin') - 0x4000),
             ('BG maps (map.bg0 / bg1, read by the original code)', 0x4000),
             ('original variables, RAM image', size('orig_ram.bin')),
             ('sprite tiles (all PCGs / refs, 4bpp)', size('spr_tiles.bin')),
             ('sprite tables (pieces, blocks, palette LUTs, font)', spr_tables),
-            ('BG tiles + chip tables (stage 1)', bg),
+            (f'BG sets: tiles, chip / composite tables ({nsets} stages)', bg),
             ('PCM sound effects (8-bit 15.625 kHz)', size('pcm.bin')),
             ('BGM (13 MDX songs + voices)', bgm)]
     used = sum(v for _, v in rows)
@@ -50,12 +51,8 @@ def main(build, rom):
     print(f'  {"port code, other tables":52s} {kb(raw - used)}')
     print(f'  image {kb(raw)}  -> ROM file {kb(rom_size)}')
 
-    # ---- projection: BG for every stage (chips of map.chp / end.chp per palette set)
-    extra = 0
-    for chp in ('map.chp', 'end.chp'):
-        chips = load_chips(os.path.join(xsp, chp))
-        combos = {(w & 0xFF, (w >> 8) & 15) for c in chips for w in c}
-        extra += 6 * (len(combos) * 32 + len(chips) * 16 * 2 * 2)   # up to 6 palette sets
+    # ---- projection: BG for the other stages (as many as the sets so far on average)
+    extra = (6 - nsets) * bg // nsets
     total = raw + extra
     print('== projection: all stages ==')
     print(f'  {"BG tiles + chips for the other stages (estimate)":52s} {kb(extra)}')
