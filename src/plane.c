@@ -47,10 +47,10 @@ _Static_assert(ENEMY_BASE + PLANE_MAX_TILES <= VRAM_PLANE_A / 32, "plane A enemy
 #define IMG_O1F0   26                   /* stage 3 type $1F0: obj200 body $B18, palette 9 */
 #define REF_O1A1   0xB16                /* stage 3 type $1A1 (obj1a0): centre $B16 after its pods $B17 */
 #define IMG_O1A1   27                   /* the pods fully out (palette 6) */
-#define REF_WING   0xB44                /* stage 4 battleship type $20A (obj20A): a wing ($B45 damaged) */
-#define IMG_WING   28                   /* a wing (the right one: mirrored) */
+#define REF_SHIP   0xB43                /* stage 4 battleship type $20A (obj20A): centre $B43, wings */
+#define IMG_SHIP   28                   /* $B44 (the right one mirrored; $B45 damaged): + mask - 1 */
 #define REF_O20E   0xB46                /* stage 4 large ship type $20E (obj20E): frames $B46..$B4D */
-#define IMG_O20E   29                   /* its frames (palette 9) */
+#define IMG_O20E   35                   /* its frames (palette 9) */
 #define LOAD_CHUNK 64                   /* tiles per VBlank */
 #define WROWS      29                   /* plane rows on screen (224 lines + fine scroll) */
 
@@ -68,7 +68,7 @@ void xsp_pairs(int on);                 /* src/xsp.c */
 static u8 loaded = 0xFF, loading = 0xFF;
 static u16 load_pos;
 static s8 shown = -1;                   /* image shown, -1 = none */
-static u8 mirror;                       /* it is shown mirrored (a right wing, IMG_WING) */
+static u8 mirror;                       /* it is shown mirrored (no image is now: always 0) */
 static s16 ax, ay;                      /* anchor of the shown image (screen pixels) */
 static s8 st_img = -2;                  /* image written by write_static (-2: none, rewrite) */
 static u32 st_cols;
@@ -77,10 +77,10 @@ static s16 hs, vs;                      /* plane A scroll: col c at x = c*8 + hs
 /* two battleships (stage 4's last part: always one above the other): the
  * wing of the second one in plane rows 32.., shown from line split on with
  * scroll hs2 / vs2 (the H-int, src/xsp_fast.s _hint) */
-#define WING_MAX   8
+#define SHIP_MAX   4
 static u16 split;                       /* 0: one image */
 static s16 hs2, vs2;
-static s16 ax2, ay2 = -999;             /* anchor of the second wing (kept while it lasts) */
+static s16 ax2, ay2 = -999;             /* centre of the second ship (kept while it lasts) */
 static s8 st_img2 = -1;
 static u32 st_cols2;
 static s16 act_hs, act_vs, act_hs2, act_vs2;    /* of the frame shown (plane_vblank) */
@@ -221,6 +221,7 @@ static u8 put_ref(const Call *cl, s16 top)
  * sprite, over it) */
 static u8 o200_arms(const Call *c, u16 i, u16 *a);
 
+static void ship_drop_shown(void);
 static void drop_image_calls(s8 img, Call *c)
 {
 
@@ -239,9 +240,8 @@ static void drop_image_calls(s8 img, Call *c)
     } else if ((u8)(img - IMG_O20E) < 8) {
         if (pal_of(c) == 9)
             c->id = EMPTY_REF;
-    } else if (img == IMG_WING) {
-        if (pal_of(c) == 6)
-            c->id = EMPTY_REF;
+    } else if ((u8)(img - IMG_SHIP) < 7) {
+        ship_drop_shown();
     } else if (img == IMG_O1A1) {
         if (pal_of(c) == 6) c->id = EMPTY_REF;
         if (pal_of(c - 1) == 6) c[-1].id = EMPTY_REF;
@@ -304,11 +304,17 @@ static u8 build_rows(s8 img, u32 cols, u8 mir, u8 k)
 /* image rows into plane rows 0..h-1, a second image (img2 >= 0) into plane
  * rows 32..32+h2-1 (built in win[]), the other rows that hold something
  * cleared */
-static u16 zero_row[32];
+static const u16 zero_row[32] __attribute__((aligned(64))) = { 0 };   /* (in ROM: DMA reads it there) */
+#ifdef PLANE_STATS
+u16 stat_wst, stat_wrows;
+#endif
 static void write_static(s8 img, u32 cols, u8 mir, s8 img2, u32 cols2, u8 mir2)
 {
     u8 h = 0, h2 = 0, pr, half;
     u32 rows[2];
+#ifdef PLANE_STATS
+    stat_wst++;
+#endif
     clear_win_rows();
     if (img >= 0)
         h = build_rows(img, cols, mir, 0);
@@ -471,19 +477,79 @@ static s8 o200_image(const Call *c, u16 i)
     return o200_arms(c, i, a) ? im : im + 1;
 }
 
-/* the image's left edge from its call's x: mirrored (as src/xsp_fast.s
- * draws an H-flipped ref: x -> -x - 17) for a right wing */
-static s16 img_left(const PlaneImg *im, u16 mirrored)
-{
-    return mirrored ? -im->ox - im->w * 8 - 16 : im->ox;
-}
-
 /* the image would show (some of it) on screen */
 static u8 on_screen(const Call *c, s8 img)
 {
     const PlaneImg *im = &plane_img[img];
-    s16 x = (c->x >> 6) + img_left(im, img == IMG_WING && (c->info & 0x4000)), y = (c->y >> 6) + im->oy;
+    s16 x = (c->x >> 6) + im->ox, y = (c->y >> 6) + im->oy;
     return x < 256 && x + im->w * 8 > 0 && y < 224 && y + im->h * 8 > 0;
+}
+
+/* the battleships (obj20A) of the frame: from the centre's position (in
+ * pixels) the parts there in palette 6 (mask bit 0 left wing, 1 right
+ * wing, 2 centre: image IMG_SHIP + mask - 1, the whole ship pre-composited
+ * with the wings in front, tools/convert_sprites.py); a flashing or
+ * damaged part ($B45) stays a sprite (in front of the plane) */
+typedef struct { s16 x, y; u8 mask, drop; u8 part[3]; } Ship;   /* drop: parts whose sprite goes */
+static Ship ship[SHIP_MAX];
+static u8 nship;
+static s8 shown_ship = -1;              /* the ship of the image shown */
+
+static void ship_add(const Call *c, u8 i)
+{
+    s16 x = c->x >> 6, y = c->y >> 6;
+    u8 bit = 0, k;
+    if (c->id == REF_SHIP) {
+        bit = 4;
+    } else {                            /* a wing: 128 px out, 24 px up */
+        y += 24;
+        if (c->info & 0x4000) {
+            x -= 128; bit = 2;
+        } else {
+            x += 128; bit = 1;
+        }
+    }
+    if (c->id == REF_SHIP + 2 || (pal_of(c) != 6 && pal_of(c) < 14))
+        bit = 0;
+    for (k = 0; k < nship && (ship[k].x != x || ship[k].y != y); k++)
+        ;
+    if (k == nship) {
+        if (nship == SHIP_MAX)
+            return;
+        ship[k].x = x; ship[k].y = y; ship[k].mask = ship[k].drop = 0;
+        nship++;
+    }
+    if (bit) {                          /* (a part flashing, palette 14 / 15: in the image, */
+        ship[k].mask |= bit;            /* its flash sprite drawn over it) */
+        if (pal_of(c) == 6)
+            ship[k].drop |= bit;
+        ship[k].part[bit >> 1] = i;     /* (bit 1, 2, 4: part 0, 1, 2) */
+    }
+}
+
+/* the image's cells on screen at all */
+static u8 ship_on_screen(const Ship *sh)
+{
+    const PlaneImg *im = &plane_img[IMG_SHIP + sh->mask - 1];
+    s16 x = sh->x + im->ox, y = sh->y + im->oy;
+    return x < 256 && x + im->w * 8 > 0 && y < 224 && y + im->h * 8 > 0;
+}
+
+static void ship_drop(const Ship *sh)
+{
+    u8 b;
+#ifdef SHIP_DEBUG
+    return;                             /* (debug: the sprites drawn over the plane image) */
+#endif
+    for (b = 0; b < 3; b++)
+        if (sh->drop & (1 << b))
+            calls[sh->part[b]].id = EMPTY_REF;
+}
+
+static void ship_drop_shown(void)
+{
+    if (shown_ship >= 0)
+        ship_drop(&ship[shown_ship]);
 }
 
 void plane_frame(void)
@@ -493,11 +559,10 @@ void plane_frame(void)
     u16 nfx;
     s8 img = -1;
     u16 i, fx = 0;
-    u8 k, nwing = 0;
-    u8 wing_ix[WING_MAX];
-    s16 wing_d[WING_MAX];
-    s16 best2 = -1;
+    u8 k;
+    s8 bship = -1, bship2 = -1;         /* the ship (index in ship[]) shown, the second one */
     Call *c;
+    nship = 0;
     /* the calls xobj_set noted (src/xsp_fast.s): the large enemy, the effects */
     for (k = 0; k < pl_n; k++) {
         u16 id;
@@ -516,6 +581,10 @@ void plane_frame(void)
         big |= id < REF_O21F && id != REF_O1A1; /* (pl_refmap: the bosses and mid bosses below obj21f) */
         if (img == 2 || (img >= IMG_O205 && img < IMG_O1F0))     /* (a boss chosen) */
             continue;
+        if ((u16)(id - REF_SHIP) <= 2) {
+            ship_add(c, i);             /* (the ships: after this loop) */
+            continue;
+        }
         if (id == REF_BOSS || (u16)(id - REF_O205) <= 6 || (u16)(id - REF_O207) <= 9) {   /* a boss: first */
             best = i;
             img = id == REF_BOSS ? 2 : id >= REF_O207 ? IMG_O207 + (id - REF_O207)
@@ -532,8 +601,6 @@ void plane_frame(void)
                 im = 3 + (id - REF_O21F);
             else if (id == REF_O200)
                 im = o200_image(c, i);
-            else if (id == REF_WING && pal_of(c) == 6)
-                im = IMG_WING;
             else if ((u16)(id - REF_O20E) <= 7 && pal_of(c) == 9)
                 im = IMG_O20E + (id - REF_O20E);
             else if (id == REF_O1A1 && i >= 2 && pal_of(c) == 6 && c[-2].id == REF_O1A1 + 1
@@ -549,17 +616,7 @@ void plane_frame(void)
                  * between two image groups (each switch reloads the tiles) */
                 u8 g = plane_img[im].group;
                 s16 d = 0;
-                if (im == IMG_WING) {
-                    /* the one shown kept while it lasts; else the wing farthest
-                     * out (coming in at a screen edge: the inner ones are
-                     * mostly shot down soon) */
-                    s16 l = (c->x >> 6) + img_left(&plane_img[im], c->info & 0x4000);
-                    s16 m = l + plane_img[im].w * 4 - 128, e = (c->x >> 6) - ax, f = (c->y >> 6) - ay;
-                    d = 400 - (m < 0 ? -m : m);
-                    if (shown == IMG_WING && (u16)(mirror << 14) == (c->info & 0x4000)
-                        && (e < 0 ? -e : e) + (f < 0 ? -f : f) < 8)
-                        d -= 1000;
-                } else if (im == IMG_O1A1) {       /* the topmost, the one shown kept */
+                if (im == IMG_O1A1) {       /* the topmost, the one shown kept */
                     s16 e = (c->x >> 6) - ax, f = (c->y >> 6) - ay;
                     d = c->y >> 6;
                     if (shown == IMG_O1A1 && (e < 0 ? -e : e) + (f < 0 ? -f : f) < 8)
@@ -569,10 +626,6 @@ void plane_frame(void)
                     d = (c->x >> 6) - ax;
                     d = (d < 0 ? -d : d) + (e < 0 ? -e : e);
                 }
-                if (im == IMG_WING && nwing < WING_MAX) {
-                    wing_ix[nwing] = i;
-                    wing_d[nwing++] = d;
-                }
                 if (g != loaded)
                     d += g == loading ? 1000 : 2000;
                 if (d < bd) {
@@ -581,6 +634,26 @@ void plane_frame(void)
             }
         }
     }
+    if (!(img == 2 || (img >= IMG_O205 && img < IMG_O1F0)))
+        for (k = 0; k < nship; k++) {
+            /* the one shown kept while it lasts; else the one most on screen */
+            const Ship *sh = &ship[k];
+            s16 d, l, r, e = sh->x - ax, f = sh->y - ay;
+            s8 im;
+            if (!sh->mask || !ship_on_screen(sh))
+                continue;
+            im = IMG_SHIP + sh->mask - 1;
+            l = sh->x + plane_img[im].ox; r = l + plane_img[im].w * 8;
+            d = -((r > 256 ? 256 : r) - (l < 0 ? 0 : l));
+            if ((u8)(shown - IMG_SHIP) < 7 && (e < 0 ? -e : e) + (f < 0 ? -f : f) < 8)
+                d -= 1000;
+            if (plane_img[im].group != loaded)
+                d += plane_img[im].group == loading ? 1000 : 2000;
+            if (d < bd) {
+                bd = d; img = im; bship = k;
+                best = sh->part[sh->mask & 4 ? 2 : sh->mask & 2 ? 1 : 0];
+            }
+        }
     if (fx > FX_CALLS)
         fx = FX_CALLS;                  /* (the rest stay sprites) */
     xsp_pairs(big);                     /* a boss / mid boss about: its lasers paired */
@@ -595,45 +668,49 @@ void plane_frame(void)
             img = -1;                   /* sprites until the tiles are in */
         }
     }
+    if (img < 0)
+        bship = -1;
     shown = img;
+    shown_ship = bship;
     split = 0;
-    if (img == IMG_WING && !fx && !was_fx && bg_on) {
-        /* a second battleship's wing, above or below the first one with a
-         * gap holding an 8-line boundary (the H-int comes every 8 lines) */
-        const PlaneImg *im = &plane_img[IMG_WING];
-        s16 y1 = (calls[best].y >> 6) + im->oy, hh = im->h * 8, bd2 = 0x7FFF;
-        for (k = 0; k < nwing; k++) {
-            s16 y2, sl, d;
-            i = wing_ix[k];
-            if ((s16)i == best)
+    if (bship >= 0 && !fx && !was_fx && bg_on) {
+        /* a second ship above or below the first one, with a gap holding an
+         * 8-line boundary (the H-int comes every 8 lines while split) */
+        const PlaneImg *im = &plane_img[img];
+        s16 y1 = ship[bship].y + im->oy, h1 = im->h * 8, bd2 = 0x7FFF;
+        for (k = 0; k < nship; k++) {
+            const Ship *sh = &ship[k];
+            const PlaneImg *im2;
+            s16 y2, h2, sl, d, e, f;
+            if ((s8)k == bship || !sh->mask || !ship_on_screen(sh))
                 continue;
-            c = &calls[i];
-            y2 = (c->y >> 6) + im->oy;
-            if (y2 >= y1 + hh)
-                sl = (y1 + hh + 7) & ~7;
-            else if (y1 >= y2 + hh)
-                sl = (y2 + hh + 7) & ~7;
+            im2 = &plane_img[IMG_SHIP + sh->mask - 1];
+            y2 = sh->y + im2->oy; h2 = im2->h * 8;
+            if (y2 >= y1 + h1)
+                sl = (y1 + h1 + 7) & ~7;
+            else if (y1 >= y2 + h2)
+                sl = (y2 + h2 + 7) & ~7;
             else
-                continue;               /* (side by side: the wings of one ship) */
+                continue;
             if (sl > (y2 > y1 ? y2 : y1))
                 continue;
-            d = wing_d[k];
-            {
-                s16 e = (c->x >> 6) - ax2, f = (c->y >> 6) - ay2;
-                if ((e < 0 ? -e : e) + (f < 0 ? -f : f) < 8)
-                    d -= 1000;          /* the second one shown kept while it lasts */
-            }
+            e = sh->x - ax2; f = sh->y - ay2;
+            d = (e < 0 ? -e : e) + (f < 0 ? -f : f) < 8 ? -1000 : 0;   /* (the one shown kept) */
             if (d < bd2) {
-                bd2 = d; best2 = i; split = sl;
+                bd2 = d; bship2 = k; split = sl;
             }
         }
     }
     if (img >= 0) {
         const PlaneImg *im = &plane_img[img];
         c = &calls[best];
-        ax = c->x >> 6; ay = c->y >> 6;
-        mirror = img == IMG_WING && (c->info & 0x4000);
-        hs = ax + img_left(im, mirror);
+        if (bship >= 0) {
+            ax = ship[bship].x; ay = ship[bship].y;
+        } else {
+            ax = c->x >> 6; ay = c->y >> 6;
+        }
+        mirror = 0;
+        hs = ax + im->ox;
         vs = -(ay + im->oy);
         plane_frames++;
     } else {
@@ -658,37 +735,35 @@ void plane_frame(void)
             return;
         }
         text_on_plane = 0;
-        if (best2 >= 0) {
-            /* the upper wing in plane rows 0.., the lower one in rows 32.. */
-            const PlaneImg *im = &plane_img[IMG_WING];
-            Call *c2 = &calls[best2];
-            u8 mir2 = (c2->info & 0x4000) != 0, mu, ml;
-            s16 h2 = (c2->x >> 6) + img_left(im, mir2), v2 = (c2->y >> 6) + im->oy;
+        if (bship2 >= 0) {
+            /* the upper ship in plane rows 0.., the lower one in rows 32.. */
+            const Ship *s2 = &ship[bship2];
+            s8 img2 = IMG_SHIP + s2->mask - 1, iu = img, il = img2;
+            const PlaneImg *im2 = &plane_img[img2];
+            s16 h2 = s2->x + im2->ox, v2 = s2->y + im2->oy;
             u32 cu, cl;
-            ax2 = c2->x >> 6; ay2 = c2->y >> 6;
+            ax2 = s2->x; ay2 = s2->y;
             if (v2 < -vs) {             /* the second one above: it takes rows 0.. */
                 s16 t = hs;
                 hs = h2; hs2 = t;
                 vs2 = 256 + vs; vs = -v2;
-                mu = mir2; ml = mirror;
+                iu = img2; il = img;
             } else {
                 hs2 = h2; vs2 = 256 - v2;
-                mu = mirror; ml = mir2;
             }
-            cu = visible_cols(im, hs) ^ ((u32)mu << 31);
-            cl = visible_cols(im, hs2) ^ ((u32)ml << 31);
-            if (st_img != IMG_WING || st_img2 != IMG_WING || cu != st_cols || cl != st_cols2)
-                write_static(IMG_WING, cu & 0x7FFFFFFF, mu, IMG_WING, cl & 0x7FFFFFFF, ml);
-            st_img = st_img2 = IMG_WING; st_cols = cu; st_cols2 = cl;
-            drop_image_calls(IMG_WING, &calls[best]);
-            drop_image_calls(IMG_WING, c2);
+            cu = visible_cols(&plane_img[iu], hs);
+            cl = visible_cols(&plane_img[il], hs2);
+            if (st_img != iu || st_img2 != il || cu != st_cols || cl != st_cols2)
+                write_static(iu, cu, 0, il, cl, 0);
+            st_img = iu; st_img2 = il; st_cols = cu; st_cols2 = cl;
+            ship_drop(&ship[bship]);
+            ship_drop(s2);
             return;
         }
         split = 0;
         ay2 = -999;
-        cols ^= (u32)mirror << 31;
         if (img != st_img || cols != st_cols || st_img2 >= 0)
-            write_static(img, cols & 0x7FFFFFFF, mirror, -1, 0, 0);
+            write_static(img, cols, 0, -1, 0, 0);
         st_img = img; st_cols = cols; st_img2 = -1;
         if (img >= 0)
             drop_image_calls(img, &calls[best]);
@@ -820,7 +895,7 @@ void plane_upload(void)
     wr_n = 0;
 #endif
     for (i = 0; i < wr_n; i++)
-        vdp_dma_vram(VRAM_PLANE_A + wr_row[i] * 64, wr_win[i] == 0xFF ? zero_row : win[wr_win[i]], 32);
+        vdp_dma_vram(VRAM_PLANE_A + wr_row[i] * 64, wr_win[i] == 0xFF ? (const void *)zero_row : win[wr_win[i]], 32);
     wr_n = 0;
     act_hs = hs; act_vs = vs;
     act_hs2 = hs2; act_vs2 = vs2; act_split = split;

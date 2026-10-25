@@ -79,9 +79,13 @@ PLANE_GROUPS = [
         # mirrored) 28 px out, 12 px up, centre $B16, palette 6: the pods fully out
         [('obj1a0', 2, -28, 6, -12), ('obj1a0', 2, 28, 6, -12, 1), ('obj1a0', 1, 0, 6)],
     ],
-    [   # stage 4 battleship type $20A (obj20A): a wing $B44 (256 x 80 px, palette 6); the
-        # right one (mirrored) is the same image written mirrored (src/plane.c mirror)
-        [('obj20A', 1, 0, 6)],
+    [   # stage 4 battleship type $20A (obj20A, palette 6): centre $B43, wings $B44 128 px
+        # either side, 24 px up (the right one mirrored), drawn in front of the centre; the
+        # whole ship from the centre's position, one image per set of parts there
+        # (src/plane.c IMG_SHIP + mask - 1: bit 0 left wing, 1 right wing, 2 centre)
+        [p for b, p in ((4, ('obj20A', 0, 0, 6)), (1, ('obj20A', 1, -128, 6, -24)),
+                        (2, ('obj20A', 1, 128, 6, -24, 1))) if m & b]
+        for m in range(1, 8)
     ],
     [   # stage 4 large ship type $20E (obj20E, 96 x 192 px, palette 9): its 8 frames $B46..$B4D
         [('obj20E', i, 0, 9)] for i in range(8)
@@ -326,6 +330,8 @@ def main(xsp, out):
                                 pix[(X + dx, ay - 16 + y + dy)] = lut[xp][v] & 15
             xs = [p[0] for p in pix]; ys = [p[1] for p in pix]
             ox, oy = min(xs), min(ys)
+            if parts[0][0] == 'obj20A':     # (the battleship: cells on an 8 px grid from the
+                ox &= ~7; oy &= ~7          # centre, so the mirrored wing reuses the tiles flipped)
             w = (max(xs) - ox) // 8 + 1; h = (max(ys) - oy) // 8 + 1
             moff = len(pmaps)
             for ty in range(h):
