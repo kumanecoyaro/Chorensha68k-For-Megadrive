@@ -466,11 +466,13 @@ void bg_scroll(s16 x0, s16 x1, s16 y0, s16 y1)
     scroll_y[0] = y0; scroll_y[1] = y1;
 }
 
+s16 bg_vs;
 void bg_upload(void)
 {
     VDP_CTRL = 0x8400 | (bg_on ? VRAM_PLANE_B >> 13 : VRAM_PLANE_A >> 13);
     VDP_CTRL32 = VSRAM_W(2);                /* plane B */
     VDP_DATA = scroll_y[0] & 511;
+    bg_vs = scroll_y[0];                    /* (src/plane.c: the column scroll writes every column) */
     VDP_CTRL32 = VRAM_W(VRAM_HSCROLL + 2);
     VDP_DATA = -scroll_x;
 }

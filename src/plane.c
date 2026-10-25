@@ -93,6 +93,15 @@ static s8 st_img2 = -1;
 static u32 st_cols2;
 static s16 act_hs, act_vs, act_hs2, act_vs2;    /* of the frame shown (plane_vblank) */
 static u16 act_split;
+/* two stage 5 battleships side by side (they come in pairs): both in plane
+ * rows 0.., in their own columns, plane A scrolled by 2-cell columns
+ * (VDP register 11): columns below colk at vs, from colk on at vsr */
+static u8 colmode, act_colmode;
+static s16 vsr, act_vsr;
+static u8 colk, act_colk;
+static s8 col_base;                     /* build_rows: image column c at plane column c + col_base */
+static s8 st_base, st_base2;
+extern s16 bg_vs;                       /* (bg.c: plane B's vertical scroll) */
 extern u16 split_line, split_vs, split_hs, act_n;
 
 static u16 win[WIN_ROWS][32];              /* visible rows, window row k = plane row top + k */
@@ -326,20 +335,51 @@ static u8 build_rows(s8 img, u32 cols, u8 mir, u8 k)
             continue;
         for (c = lo; c <= hi; c++) {
             u8 j = mir ? im->w - 1 - c : c;
-            d[c & 31] = m[j] ? (attr + m[j]) ^ (mir ? 0x800 : 0) : 0;
+            d[(c + col_base) & 31] = m[j] ? (attr + m[j]) ^ (mir ? 0x800 : 0) : 0;
         }
     }
     return im->h;
 }
 
 #define ROWS_MASK(n) ((n) >= 32 ? 0xFFFFFFFFUL : (1UL << (n)) - 1)
+#ifdef PLANE_STATS
+u16 stat_wst, stat_wrows;
+#endif
+/* two images in plane rows 0.., side by side (their columns apart) */
+static void write_cols2(s8 img, u32 cols, s8 base, s8 img2, u32 cols2, s8 base2)
+{
+    u8 h, h2, pr, half;
+    u32 rows;
+#ifdef PLANE_STATS
+    stat_wst++;
+#endif
+    clear_win_rows();
+    col_base = base;
+    h = build_rows(img, cols, 0, 0);
+    col_base = base2;
+    h2 = build_rows(img2, cols2, 0, 0);
+    col_base = 0;
+    if (h2 > h)
+        h = h2;
+    rows = ROWS_MASK(h);
+    win_nz = rows;
+    wr_n = 0;
+    for (half = 0; half < 2; half++) {
+        u32 v = vram_nz[half] | (half ? 0 : rows);
+        for (pr = half << 5; v; v >>= 1, pr++)
+            if (v & 1) {
+                wr_row[wr_n] = pr;
+                wr_win[wr_n] = !half && pr < h ? pr : 0xFF;
+                wr_n++;
+            }
+    }
+    vram_nz[0] = rows;
+    vram_nz[1] = 0;
+}
 /* image rows into plane rows 0..h-1, a second image (img2 >= 0) into plane
  * rows 32..32+h2-1 (built in win[]), the other rows that hold something
  * cleared */
 static const u16 zero_row[32] __attribute__((aligned(64))) = { 0 };   /* (in ROM: DMA reads it there) */
-#ifdef PLANE_STATS
-u16 stat_wst, stat_wrows;
-#endif
 static void write_static(s8 img, u32 cols, u8 mir, s8 img2, u32 cols2, u8 mir2)
 {
     u8 h = 0, h2 = 0, pr, half;
@@ -593,6 +633,8 @@ void plane_frame(void)
     u16 i, fx = 0;
     u8 k;
     s8 bship = -1, bship2 = -1;         /* the ship (index in ship[]) shown, the second one */
+    u8 nbig = 0, big_ix[3];             /* stage 5 battleships on screen (call indices) */
+    s16 big2 = -1;
     Call *c;
     nship = 0;
     /* the calls xobj_set noted (src/xsp_fast.s): the large enemy, the effects */
@@ -646,6 +688,8 @@ void plane_frame(void)
             else if ((u16)(id - REF_O21A) <= 1
                      && (pal_of(c) == 6 || (pal_of(c) >= 14 && (u8)(shown - IMG_O21A) < 2)))
                 im = IMG_O21A + (id - REF_O21A);    /* (hit flash: the image kept) */
+            if (im >= 0 && (u8)(im - IMG_O21A) < 2 && nbig < 3 && on_screen(c, im))
+                big_ix[nbig++] = i;
             else if (id == REF_O213 && (pal_of(c) == 3 || (pal_of(c) >= 14 && shown == IMG_O213)))
                 im = IMG_O213;
             else if ((u16)(id - REF_O20E) <= 7
@@ -751,6 +795,28 @@ void plane_frame(void)
             }
         }
     }
+    colmode = 0;
+    {
+        s16 best2c = -1;
+        if ((u8)(img - IMG_O21A) < 2 && !fx && !was_fx && bg_on)
+            for (k = 0; k < nbig; k++)
+                if (big_ix[k] != best) {
+                    /* (their cells' ranges 16 px apart at least: no 2-cell
+                     * column holds both) */
+                    const Call *c1 = &calls[best], *c2 = &calls[big_ix[k]];
+                    const PlaneImg *i1 = &plane_img[img], *i2 = &plane_img[IMG_O21A + (c2->id - REF_O21A)];
+                    s16 a0 = (c1->x >> 6) + i1->ox, a1 = a0 + i1->w * 8;
+                    s16 b0 = (c2->x >> 6) + i2->ox, b1 = b0 + i2->w * 8;
+                    if (b0 - a1 >= 16 || a0 - b1 >= 16) {
+                        best2c = big_ix[k];
+                        break;
+                    }
+                }
+        if (best2c >= 0) {
+            colmode = 1;
+            big2 = best2c;
+        }
+    }
     if (img >= 0) {
         const PlaneImg *im = &plane_img[img];
         c = &calls[best];
@@ -785,6 +851,39 @@ void plane_frame(void)
             return;
         }
         text_on_plane = 0;
+        if (colmode) {
+            /* the left one and the right one; one horizontal scroll for both:
+             * the fine part splits the difference (2 px off at most) */
+            const Call *cl = &calls[best], *cr = &calls[big2];
+            s8 il = img, ir = IMG_O21A + (cr->id - REF_O21A), bl, br;
+            s16 xl, xr, f, d;
+            u32 kl, kr;
+            if ((cr->x >> 6) < (cl->x >> 6)) {
+                const Call *t = cl; s8 ti = il;
+                cl = cr; cr = t; il = ir; ir = ti;
+            }
+            xl = (cl->x >> 6) + plane_img[il].ox;
+            xr = (cr->x >> 6) + plane_img[ir].ox;
+            d = (((xr - xl) & 7) + 4) % 8 - 4;
+            f = (xl + (d >> 1)) & 7;
+            bl = (s8)((xl - f + 4) >> 3); br = (s8)((xr - f + 4) >> 3);
+            hs = f;
+            vs = -((cl->y >> 6) + plane_img[il].oy);
+            vsr = -((cr->y >> 6) + plane_img[ir].oy);
+            {   /* the first 2-cell column holding some of the right one */
+                s16 x = br * 8 + f;
+                colk = x <= 0 ? 0 : x >= 256 ? 16 : (u8)(x >> 4);
+            }
+            kl = visible_cols(&plane_img[il], bl * 8 + f);
+            kr = visible_cols(&plane_img[ir], br * 8 + f);
+            if (st_img != il || st_img2 != ir || kl != st_cols || kr != st_cols2 || bl != st_base || br != st_base2)
+                write_cols2(il, kl, bl, ir, kr, br);
+            st_img = il; st_img2 = ir; st_cols = kl; st_cols2 = kr; st_base = bl; st_base2 = br;
+            drop_image_calls(il, (Call *)cl);
+            drop_image_calls(ir, (Call *)cr);
+            return;
+        }
+        st_base = st_base2 = 0;
         if (bship2 >= 0) {
             /* the upper ship in plane rows 0.., the lower one in rows 32.. */
             const Ship *s2 = &ship[bship2];
@@ -949,16 +1048,28 @@ void plane_upload(void)
     wr_n = 0;
     act_hs = hs; act_vs = vs;
     act_hs2 = hs2; act_vs2 = vs2; act_split = split;
+    act_colmode = colmode; act_vsr = vsr; act_colk = colk;
 }
 
 /* every VBlank: plane A's scroll at the top of the frame shown, the H-int
  * for its split (src/xsp_fast.s _hint) and the sprite doubler */
 void plane_vblank(void)
 {
-    VDP_CTRL32 = VSRAM_W(0);
-    VDP_DATA = act_vs & 511;
-    if (!bg_on)                         /* (plane B shows plane A's table: on top of it) */
+    if (act_colmode) {                  /* 2-cell column scroll: plane A by column, B all alike */
+        u8 k;
+        vdp_set_reg(11, 0x04);
+        VDP_CTRL32 = VSRAM_W(0);
+        for (k = 0; k < 16; k++) {
+            VDP_DATA = (k < act_colk ? act_vs : act_vsr) & 511;
+            VDP_DATA = bg_vs & 511;
+        }
+    } else {
+        vdp_set_reg(11, 0x00);
+        VDP_CTRL32 = VSRAM_W(0);
         VDP_DATA = act_vs & 511;
+        if (!bg_on)                     /* (plane B shows plane A's table: on top of it) */
+            VDP_DATA = act_vs & 511;
+    }
     VDP_CTRL32 = VRAM_W(VRAM_HSCROLL);
     VDP_DATA = act_hs;
     if (!bg_on)
