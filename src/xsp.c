@@ -108,9 +108,11 @@ static void hash_remove(u16 h)
 }
 
 /* meshed copies of effect blocks (xsp_tile_for): keys MESH_KEY + index * 16
- * + palette, above every sprite key (block < 2788: key < $AE50) */
-#define MESH_KEY  0xB000
+ * + palette, above every sprite key (block << 4 | palette) */
+#define MESH_KEY  0xC000
 #define MESH_MAX  64                    /* open addressing by block: block + 1, 0 = free */
+_Static_assert(NBLOCK * 16 <= MESH_KEY, "sprite keys run into the meshed ones");
+_Static_assert(MESH_KEY + MESH_MAX * 16 < 0xFFFF, "meshed keys run into KEY_EMPTY");
 static u16 mesh_blk[MESH_MAX];
 
 #ifdef TEST_KEYLOG

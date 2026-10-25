@@ -25,7 +25,6 @@
     .set    ENEMY_PR, 0x34                  | the enemies
     .set    VLASER_A, 0x50                  | vertical laser segments (thick, thin): pairs
     .set    VLASER_B, 0x59                  | one above the other become one ref
-    .set    VLASER_REF, NREF - 2            | (tools/convert_sprites.py VLASER_PCGS)
     .set    ENEMY_ROOM, 16                  | sprites the enemy bullets leave them at most
     .set    EFFECT_LO, 0x0B5                | expl2 .. expl4
     .set    EFFECT_HI, 0x210
@@ -235,7 +234,38 @@ pr_map:
     and.w   #0xFF, %d5
     dbra    %d4, 4b
     bra.s   25f
-3:  bset    #6, 4(%a1)                  | id bit 14 (as a text cell: xsp_build looks
+3:  move.w  %d2, %d0                    | a pre-composited pair (pair_lut, by the
+    sub.w   #LASER_LO, %d0              | step unflipped): the first call becomes
+    move.w  %d0, %d5                    | its ref (tools/convert_sprites.py PAIR_STEP)
+    lsl.w   #5, %d5
+    add.w   %d0, %d5                    | pcg * 33
+    move.w  %d5, %d0
+    lsl.w   #5, %d0
+    add.w   %d5, %d0                    | pcg * 33 * 33
+    move.w  %d4, %d5                    | dy + 16
+    tst.w   %d3
+    bpl.s   34f
+    neg.w   %d5                         | (V flip)
+    add.w   #32, %d5
+34: add.w   %d5, %d0
+    lsl.w   #5, %d5
+    add.w   %d5, %d0                    | + (dy + 16) * 33
+    move.w  %d6, %d5                    | dx + 16
+    btst    #14, %d3
+    beq.s   35f
+    neg.w   %d5                         | (H flip)
+    add.w   #32, %d5
+35: add.w   %d5, %d0
+    lea     pair_lut, %a0
+    moveq   #0, %d5
+    move.b  0(%a0,%d0.w), %d5
+    beq.s   36f
+    add.w   #PAIR_REF - 1, %d5
+    move.w  %d5, 4(%a1)
+    movem.l (%sp)+, %d4-%d6/%a1
+    moveq   #1, %d0
+    rts
+36: bset    #6, 4(%a1)                  | id bit 14 (as a text cell: xsp_build looks
     bset    #4, 6(%a1)                  | there) and info bit 12: a pair, dx + 16 / dy + 16 in
     and.w   #0xFFC0, (%a1)              | the first one's x / y fraction bits (the
     or.w    %d6, (%a1)                  | sprites only use whole pixels)
