@@ -21,6 +21,7 @@
     .set    MAX_HW, 64
     .set    PLAYER_LO, 0xABD                | player.ref, player2.ref
     .set    PLAYER_HI, 0xAD5
+    .set    PLAYER_ROOM, 4                  | sprites kept free for the player after $3F
     .set    EFFECT_LO, 0x0B5                | expl2 .. expl4
     .set    EFFECT_HI, 0x210
     .set    PARTICLE_LO, 0x210              | spark, debris1, debris2: not drawn
@@ -157,7 +158,10 @@ pr_map:
     .irp    p, 32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55
     .byte   \p
     .endr
-    .byte   0x80 | SMOKE_PR, 57, PSHOT_TO, 0x80 | SMOKE_PR2, 60, 61, 62, 63
+    .byte   0x80 + SMOKE_PR, 57, PSHOT_TO, 0x80 + SMOKE_PR2, 60, 61, 62, 63
+    .if     . - pr_map - 64                 | (`|` starts a comment here: write `+`)
+    .error  "pr_map: not 64 entries"
+    .endif
     .balign 2
 
 | A laser segment (rows of bullets change their spacing every frame: no
@@ -321,11 +325,20 @@ xsp_build:
     clr.w   dbl_n
     clr.w   dbl_rn
 1:  move.w  (%sp), %d0
-    cmp.w   pr_lo, %d0
+    lea     bhead, %a1
+41: cmp.w   pr_lo, %d0                  | (empty priorities skipped here)
     blt     90f
+    cmp.b   #0xFF, 0(%a1,%d0.w)
+    bne.s   42f
+    subq.w  #1, %d0
+    bra.s   41b
+42: move.w  %d0, (%sp)
     move.w  #MAX_HW, hw_limit
     move.w  #0x7FFF, fx_cap
-    cmp.w   #EFFECT_PR, %d0
+    cmp.w   #0x3F, %d0                  | the front ($3F: the bomb ...) leaves room
+    bne.s   3f                          | for the player ship ($3E, 2 pieces)
+    move.w  #MAX_HW - PLAYER_ROOM, hw_limit
+3:  cmp.w   #EFFECT_PR, %d0
     bne.s   3f
     move.w  %d7, %d1                    | effects: FX_MAX more at most
     add.w   #FX_MAX, %d1

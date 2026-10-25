@@ -559,9 +559,49 @@ u16 fstat[32][4];                           /* CPU-converted bytes, ROM bytes, c
 extern u8 probe_n;
 u16 stamp(void);
 #endif
+#ifdef TEST_PLCHK
+/* (debug) the player ship in the built table: frames with its call, with a
+ * piece not in VRAM, with a piece not in the table, without its call; the
+ * last bad frame, its ncalls and sprites */
+u16 plchk[8];
+static void plchk_after(const Call *pc, u16 n)
+{
+    u16 id = pc->id, k, j, bad_c = 0, bad_t = 0;
+    u8 pal = (pc->info >> 8) & 15;
+    s16 px = pc->x >> 6, py = pc->y >> 6;
+    plchk[0]++;
+    for (k = ref_start[id]; k < ref_start[id + 1]; k++) {
+        const SprPiece *q = &ref_pieces[k];
+        u16 key = (q->block << 4) | ((pal ^ q->palx) & 15), h = hslot(key), tile;
+        s16 sx = px + q->dx, sy = py + q->dy;
+        if (sx <= -32 || sx >= 256 || sy <= -32 || sy >= 224)
+            continue;
+        while (htab[h].key != key && htab[h].key != KEY_EMPTY)
+            h = (h + 1) & (HASH_SIZE - 1);
+        if (htab[h].key != key) {
+            bad_c = 1;
+            continue;
+        }
+        tile = htab[h].tile;
+        for (j = 0; j < n && (table[j].attr & 0x7FF) != tile; j++)
+            ;
+        if (j == n)
+            bad_t = 1;
+    }
+    plchk[1] += bad_c;
+    plchk[2] += bad_t;
+    if (bad_c | bad_t) {
+        plchk[4] = xframe; plchk[5] = ncalls; plchk[6] = n;
+    }
+}
+#endif
 void xsp_flush(void)
 {
     u16 n;
+#ifdef TEST_PLCHK
+    Call plc;
+    u8 have_pl = 0;
+#endif
 #ifdef FRAME_PROBE
     u16 *fp = fprobe[probe_n & 31];
     fp[0] = stamp();
@@ -574,7 +614,23 @@ void xsp_flush(void)
 #ifdef FRAME_PROBE
     fp[2] = stamp();
 #endif
+#ifdef TEST_PLCHK
+    {
+        u8 c;
+        for (c = bhead[0x3E]; c != 0xFF; c = call_next[c])
+            if (!(calls[c].id & 0x8000) && calls[c].id >= 0xABD && calls[c].id < 0xAD5) {
+                plc = calls[c];
+                have_pl = 1;
+            }
+        if (!have_pl)
+            plchk[3]++;
+    }
+#endif
     n = xsp_build(table);
+#ifdef TEST_PLCHK
+    if (have_pl)
+        plchk_after(&plc, n);
+#endif
 #ifdef FRAME_PROBE
     fp[3] = stamp();
     {

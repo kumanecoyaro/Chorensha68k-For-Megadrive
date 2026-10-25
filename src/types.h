@@ -18,6 +18,13 @@ static inline s32 muls(s16 a, s16 b)
     return r;
 }
 
+static inline u32 mulu(u16 a, u16 b)
+{
+    u32 r = a;
+    __asm__("mulu.w %1,%0" : "+d"(r) : "dmi"(b));
+    return r;
+}
+
 /* 68000 32/16 signed divide, quotient only (avoids libgcc __divsi3) */
 static inline s16 divs(s32 a, s16 b)
 {

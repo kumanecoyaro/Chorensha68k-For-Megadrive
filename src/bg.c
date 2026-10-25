@@ -153,7 +153,7 @@ static void comp_release(u8 near, u8 far)
         return;
     for (i = 0; i < 16; i++) {
         m = bs->near_mix[near * 16 + i];
-        if (m && (c = bs->comp[(m - 1) * bs->nfar + fx]) != 0) {
+        if (m && (c = bs->comp[mulu(m - 1, bs->nfar) + fx]) != 0) {
             u8 s = slot_of((c & 0x1FFF) - 1);
             if (s && slot_ref[s - 1] && !--slot_ref[s - 1]) {
                 comp_freed = 1;
@@ -236,7 +236,7 @@ static void merge_cell(u8 p, u8 c)
     for (i = 0; i < 16; i++) {
         m = bs->near_mix[n * 16 + i];
         if (m) {
-            u16 cw = fx == 0xFF ? 0 : bs->comp[(m - 1) * bs->nfar + fx], t;
+            u16 cw = fx == 0xFF ? 0 : bs->comp[mulu(m - 1, bs->nfar) + fx], t;
             w[i] = nw[i];
             if (cw) {
                 if ((t = comp_get(cw & 0x1FFF)) != 0)

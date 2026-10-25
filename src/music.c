@@ -21,6 +21,7 @@ typedef struct {
     u8 w;               /* 0 saw, 1 square, 2 triangle (+4: depth x 256) */
     u16 period, t;
     s32 step, val;      /* 1/256 units */
+    s32 val0;           /* sawtooth: the value it restarts from */
     s8 dir;
     u8 first;
 } Lfo;
@@ -360,14 +361,18 @@ static void lfo_reset(Lfo *l, u8 w, u16 p, s16 a)
     l->w = w;
     l->period = p ? p : 1;
     l->step = a;        /* change per tick in 1/256 detune (MP) or TL (MA) units */
-    if (w & 4)          /* MXDRV: waveform + 4 = depth x 256 (the drums' pitch drop: */
+    /* sawtooth start: -step * period / 2 (a 16 x 16 multiply, not __mulsi3) */
+    l->val0 = -muls(a, l->period >> 1);
+    if (w & 4) {        /* MXDRV: waveform + 4 = depth x 256 (the drums' pitch drop: */
         l->step <<= 8;  /* MP6,80,-204 sweeps a kick down 3 semitones a tick) */
+        l->val0 <<= 8;
+    }
     l->t = 0;
     l->dir = 1;
     l->first = 1;
     l->val = 0;
     if ((w & 3) == 0)
-        l->val = -(l->step * (s32)(l->period >> 1));
+        l->val = l->val0;
 }
 
 static void lfo_tick(Lfo *l);
@@ -401,7 +406,7 @@ static void lfo_tick(Lfo *l)
         l->val += l->step;
         if (l->t >= l->period) {
             l->t = 0;
-            l->val = -(l->step * (s32)(l->period >> 1));
+            l->val = l->val0;
         }
         break;
     case 1:
