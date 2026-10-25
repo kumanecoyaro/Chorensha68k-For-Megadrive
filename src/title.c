@@ -52,7 +52,7 @@ static u8 sel_stage = TEST_STAGE;
 #else
 static u8 sel_stage = 1;
 #endif
-#define NSTAGES 4                       /* converted stages (src/bg.c BG sets) */
+#define NSTAGES 5                       /* converted stages (src/bg.c BG sets) */
 u8 start_stage;                         /* src/bg.c: taken at the game's first full redraw */
 
 static void puts_at(u8 x, u8 y, const char *s)

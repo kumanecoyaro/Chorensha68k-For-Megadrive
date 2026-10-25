@@ -51,6 +51,9 @@ _Static_assert(ENEMY_BASE + PLANE_MAX_TILES <= VRAM_PLANE_A / 32, "plane A enemy
 #define IMG_SHIP   28                   /* $B44 (the right one mirrored; $B45 damaged): + mask - 1 */
 #define REF_O20E   0xB46                /* stage 4 large ship type $20E (obj20E): frames $B46..$B4D */
 #define IMG_O20E   35                   /* its frames (palette 9) */
+#define REF_O216   0xB5E                /* stage 5 boss obj216: body; parts $B5F..$B67 over it, arms $B68.. */
+#define IMG_O216   43                   /* the body alone, + k: with part $B5E + k (k 1..9) */
+#define BOSS_IMG(m) ((m) == 2 || ((m) >= IMG_O205 && (m) < IMG_O1F0) || (u8)((m) - IMG_O216) < 10)
 #define LOAD_CHUNK 64                   /* tiles per VBlank */
 #define WROWS      29                   /* plane rows on screen (224 lines + fine scroll) */
 
@@ -242,6 +245,11 @@ static void drop_image_calls(s8 img, Call *c)
             c->id = EMPTY_REF;
     } else if ((u8)(img - IMG_SHIP) < 7) {
         ship_drop_shown();
+    } else if ((u8)(img - IMG_O216) < 10) {
+        if (pal_of(c) == 8)
+            c->id = EMPTY_REF;
+        if (img != IMG_O216 && pal_of(c + 1) == 8 && c[1].x == c->x && c[1].y == c->y)
+            c[1].id = EMPTY_REF;
     } else if (img == IMG_O1A1) {
         if (pal_of(c) == 6) c->id = EMPTY_REF;
         if (pal_of(c - 1) == 6) c[-1].id = EMPTY_REF;
@@ -579,8 +587,17 @@ void plane_frame(void)
             continue;
         }
         big |= id < REF_O21F && id != REF_O1A1; /* (pl_refmap: the bosses and mid bosses below obj21f) */
-        if (img == 2 || (img >= IMG_O205 && img < IMG_O1F0))     /* (a boss chosen) */
+        if (BOSS_IMG(img))              /* (a boss chosen) */
             continue;
+        if (id == REF_O216 && (pal_of(c) == 8 || (pal_of(c) >= 14 && (u8)(shown - IMG_O216) < 10))) {
+            u8 k = 0;                   /* the stage 5 boss (hit flash: the image kept) */
+            if ((u16)(c[1].id - REF_O216 - 1) <= 8 && c[1].x == c->x && c[1].y == c->y && i + 1u < ncalls)
+                k = c[1].id - REF_O216;
+            best = i;
+            img = IMG_O216 + k;
+            boss_seen = 1;
+            continue;
+        }
         if ((u16)(id - REF_SHIP) <= 2) {
             ship_add(c, i);             /* (the ships: after this loop) */
             continue;
@@ -636,7 +653,7 @@ void plane_frame(void)
             }
         }
     }
-    if (!(img == 2 || (img >= IMG_O205 && img < IMG_O1F0)))
+    if (!BOSS_IMG(img))
         for (k = 0; k < nship; k++) {
             /* the one shown kept while it lasts; else the one most on screen */
             const Ship *sh = &ship[k];
