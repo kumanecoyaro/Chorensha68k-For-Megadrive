@@ -51,6 +51,9 @@ static u16 slot_ent[NSLOT];             /* hash entry holding the slot, NO_ENTRY
 static u16 clock_a, clock_b;
 static u16 full_frame[2] = { 0xFFFF, 0xFFFF };  /* xframe at which the 4 / 16-tile slots ran out */
 u16 xsp_misses, xsp_fail;
+#ifdef TEST_FAILLOG
+u16 fail_up, fail_full[2], fail_key[16], fail_n;   /* (debug) why cache_miss refused, which keys */
+#endif
 
 static u8 stage[STAGE_BYTES] __attribute__((aligned(4)));
 static u16 stage_len;
@@ -101,6 +104,7 @@ static u16 mesh_blk[MESH_MAX];
 #ifdef TEST_KEYLOG
 u16 keylog[256], keylog_n;
 #endif
+static u8 fx_loading;                   /* cache_miss for a plane A effect (xsp_tile_for) */
 /* called by xsp_fast.s when (block, palette) is not in VRAM */
 u16 cache_miss(u16 key)
 {
@@ -131,12 +135,18 @@ u16 cache_miss(u16 key)
 #endif
     if (nup >= MAX_UP || (rom >= 0 ? rom_len + n * 32 > ROM_BYTES : stage_len + n * 32 > STAGE_BYTES)) {
         xsp_fail++;
+#ifdef TEST_FAILLOG
+        fail_up++; fail_key[fail_n++ & 15] = key;
+#endif
         return 0;
     }
     {
         u8 big = n > 4;
         if (full_frame[big] == xframe) {
             xsp_fail++;
+#ifdef TEST_FAILLOG
+            fail_full[big]++; fail_key[fail_n++ & 15] = key;
+#endif
             return 0;               /* (found full already this frame) */
         }
         if (!big) {
@@ -144,16 +154,27 @@ u16 cache_miss(u16 key)
         } else {
             clk = &clock_b; start = CACHE_A_SLOTS; i = CACHE_B_SLOTS;
         }
-        /* clock replacement: the next slot not used by the frame being built */
+        /* clock replacement: the next slot not used by the frame being built
+         * (an effect, loaded before the sprites: nor by the last frame, so
+         * the player and the like keep their tiles) */
         for (;;) {
+            u16 st;
             s = start + *clk;
             if (++*clk >= (big ? CACHE_B_SLOTS : CACHE_A_SLOTS))
                 *clk = 0;
-            if (slot_ent[s] == NO_ENTRY || htab[slot_ent[s]].stamp != xframe)
+            if (slot_ent[s] == NO_ENTRY)
+                break;
+            st = htab[slot_ent[s]].stamp;
+            if (st != xframe && !(fx_loading && st == (u16)(xframe - 1)))
                 break;
             if (!--i) {
+                if (fx_loading)
+                    return 0;               /* (the sprites may still find one) */
                 full_frame[big] = xframe;
                 xsp_fail++;
+#ifdef TEST_FAILLOG
+                fail_full[big]++; fail_key[fail_n++ & 15] = key;
+#endif
                 return 0;           /* every slot is in use this frame */
             }
         }
@@ -198,14 +219,15 @@ u16 cache_miss(u16 key)
 /* VRAM tile of (block, palette) for an effect drawn into plane A
  * (src/plane.c), loading it if needed; mesh: a checkerboard copy (half the
  * pixels: the X68000's translucent bomb).  Effects get a share of the
- * frame's tile uploads and of the 16-tile slots so they never starve the
+ * frame's tile uploads and of the 4 / 16-tile slots so they never starve the
  * sprites (built after them); 0 = over budget, not drawn this frame. */
 #define FX_STAGE_MAX 1536
 #ifndef FX_ROM_MAX
 #define FX_ROM_MAX   3072               /* the meshed bomb: DMA from ROM, no conversion */
 #endif
+#define FX_ASLOTS    40                 /* (of 96: the boss's death with the player and bullets) */
 #define FX_BSLOTS    12
-static u16 fx_stage, fx_bslots;
+static u16 fx_stage, fx_aslots, fx_bslots;
 u16 xsp_tile_for(u16 block, u8 pal, u8 mesh, u16 *keyp)
 {
     u16 key = (block << 4) | pal, h, n = spr_blocks[block].ntiles, t;
@@ -218,13 +240,17 @@ u16 xsp_tile_for(u16 block, u8 pal, u8 mesh, u16 *keyp)
         key = MESH_KEY + (t << 4) + pal;
     }
     *keyp = key;
-    if (n > 4 && fx_bslots >= FX_BSLOTS)
+    if (n > 4 ? fx_bslots >= FX_BSLOTS : fx_aslots >= FX_ASLOTS)
         return 0;
     h = hslot(key);
     while (htab[h].key != KEY_EMPTY) {
         if (htab[h].key == key) {
-            if (htab[h].stamp != xframe && n > 4)
-                fx_bslots++;
+            if (htab[h].stamp != xframe) {
+                if (n > 4)
+                    fx_bslots++;
+                else
+                    fx_aslots++;
+            }
             htab[h].stamp = xframe;
             return htab[h].tile;
         }
@@ -232,11 +258,15 @@ u16 xsp_tile_for(u16 block, u8 pal, u8 mesh, u16 *keyp)
     }
     if (fx_stage + n * 32 > (mesh ? FX_ROM_MAX : FX_STAGE_MAX))
         return 0;
+    fx_loading = 1;
     t = cache_miss(key);
+    fx_loading = 0;
     if (t) {
         fx_stage += n * 32;
         if (n > 4)
             fx_bslots++;
+        else
+            fx_aslots++;
     }
     return t;
 }
@@ -393,7 +423,7 @@ void xsp_flush(void)
     ntable = n;
     ncalls = 0;
     pl_n = 0;
-    fx_stage = fx_bslots = 0;
+    fx_stage = fx_aslots = fx_bslots = 0;
     base_valid = 0;
     pr_lo = 64; pr_hi = 0;
     table_ready = 1;
