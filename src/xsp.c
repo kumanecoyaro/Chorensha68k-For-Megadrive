@@ -26,6 +26,7 @@
 #ifndef CACHE_B_SLOTS
 #define CACHE_B_SLOTS 40            /* (28 thrashed with stage 2's mid boss: 16-tile blocks) */
 #endif
+#define PAIR_SLOTS    6             /* the last 16-tile slots: laser segment pairs (pair_tile) */
 #define CACHE_B_BASE  (1234 - CACHE_B_SLOTS * 16)
 #define NSLOT (CACHE_A_MAX + CACHE_B_SLOTS)
 static u16 cache_a_base = BG_TILE_COUNT, cache_a_n = (CACHE_B_BASE - BG_TILE_COUNT) / 4;
@@ -160,7 +161,7 @@ u16 cache_miss(u16 key)
         if (!big) {
             clk = &clock_a; start = 0; i = cache_a_n;
         } else {
-            clk = &clock_b; start = CACHE_A_MAX; i = CACHE_B_SLOTS;
+            clk = &clock_b; start = CACHE_A_MAX; i = CACHE_B_SLOTS - PAIR_SLOTS;
         }
         /* clock replacement: the next slot not used by the frame being built
          * (an effect, loaded before the sprites: nor by the last frame, so
@@ -168,7 +169,7 @@ u16 cache_miss(u16 key)
         for (;;) {
             u16 st;
             s = start + *clk;
-            if (++*clk >= (big ? CACHE_B_SLOTS : cache_a_n))
+            if (++*clk >= (big ? CACHE_B_SLOTS - PAIR_SLOTS : cache_a_n))
                 *clk = 0;
             if (slot_ent[s] == NO_ENTRY)
                 break;
@@ -296,6 +297,116 @@ void xsp_touch(u16 key)
 const s16 size_w[16] = { 8, 8, 8, 8, 16, 16, 16, 16, 24, 24, 24, 24, 32, 32, 32, 32 };
 const s16 size_h[16] = { 8, 16, 24, 32, 8, 16, 24, 32, 8, 16, 24, 32, 8, 16, 24, 32 };
 
+/* ------------------------------------------------------------ PCG pairs */
+/* Two calls of the same laser segment PCG with the same attributes within
+ * 32x32 of each other (paired when recorded, src/xsp_fast.s h_xsp_set_boss) are
+ * drawn as one 32x32 sprite: the two PCGs composited (flips applied) into one
+ * of PAIR_SLOTS 16-tile slots, kept by (PCG, attributes, offset).  A
+ * composite costs ~40k cycles: one a frame at most, paid for by credit that
+ * the hits earn (the offsets change as the beams sweep and seldom repeat: a
+ * pair without a composite is drawn as two sprites, as before).  Only while
+ * a boss or a mid boss is about (xsp_pairs). */
+#define PAIR_COST   64
+#define PAIR_CREDIT (PAIR_COST * PAIR_SLOTS)
+s16 pair_ox, pair_oy;                   /* the composite's top left from the first PCG */
+static u32 pair_key[PAIR_SLOTS];        /* key + 1, 0 = free */
+static u16 pair_stamp[PAIR_SLOTS];
+static u16 pair_frame, pair_tick;       /* xframe of the last composite / credit */
+static u16 pair_credit;                 /* + 1 a hit and every 4 frames */
+#ifdef TEST_PAIRLOG
+u32 pair_cnt[3];                        /* (debug) hits, composites, refused */
+#endif
+
+/* src/xsp_fast.s: a 16x16 PCG (lut converts a byte of two X68000 pixels)
+ * into the 32x32 composite at dst (MD sprite tile order) at (ox, oy), flipped */
+void pair_put(u8 *dst, const u8 *src, const u8 *lut, int ox, int oy, int flips);
+#define NM(b) ((((b) & 0xF0) ? 0xF0 : 0) | (((b) & 0x0F) ? 0x0F : 0))
+#define NM4(b) NM(b), NM(b + 1), NM(b + 2), NM(b + 3)
+#define NM16(b) NM4(b), NM4(b + 4), NM4(b + 8), NM4(b + 12)
+const u8 nib_mask[256] = {              /* the non-zero pixels of a byte (pair_put) */
+    NM16(0), NM16(16), NM16(32), NM16(48), NM16(64), NM16(80), NM16(96), NM16(112),
+    NM16(128), NM16(144), NM16(160), NM16(176), NM16(192), NM16(208), NM16(224), NM16(240)
+};
+
+u16 pair_tile(u16 ci)
+{
+    const Call *c = &calls[ci];
+    u16 pcg = c->id & 0x3FFF, info = c->info & 0xCF00, k, best = 0;
+    s16 dx = (c->x & 63) - 16, dy = (c->y & 63) - 16;
+    u32 key = ((u32)pcg << 18) | ((u32)(info >> 8) << 12) | ((c->x & 63) << 6) | (c->y & 63);
+    const SprBlock *b = &spr_blocks[pcg_block[pcg]];
+    u8 *dst;
+    pair_ox = dx < 0 ? dx : 0;
+    pair_oy = dy < 0 ? dy : 0;
+    for (k = 0; k < PAIR_SLOTS; k++)
+        if (pair_key[k] == key + 1) {
+            pair_stamp[k] = xframe;
+            if (pair_credit < PAIR_CREDIT)
+                pair_credit++;
+#ifdef TEST_PAIRLOG
+            pair_cnt[0]++;
+#endif
+            return CACHE_B_BASE + (CACHE_B_SLOTS - PAIR_SLOTS + k) * 16;
+        }
+    k = (u16)(xframe - pair_tick) >> 2;
+    pair_tick += k << 2;
+    pair_credit = pair_credit + k < PAIR_CREDIT ? pair_credit + k : PAIR_CREDIT;
+    /* (src/xsp_fast.s LASER_LO / HI: an original info with bit 12 set is drawn as two) */
+    if ((u16)(pcg - 0x50) > 0x5F - 0x50 || b->ntiles != 4
+        || pair_frame == xframe || pair_credit < PAIR_COST || nup >= MAX_UP || stage_len + 512 > STAGE_BYTES) {
+#ifdef TEST_PAIRLOG
+        pair_cnt[2]++;
+#endif
+        return 0;
+    }
+    for (k = 1; k < PAIR_SLOTS; k++)        /* the one unused longest (not this frame's) */
+        if ((u16)(xframe - pair_stamp[k]) > (u16)(xframe - pair_stamp[best]))
+            best = k;
+    if (pair_key[best] && pair_stamp[best] == xframe)
+        return 0;
+    pair_frame = xframe;
+    pair_credit -= PAIR_COST;
+#ifdef TEST_PAIRLOG
+    pair_cnt[1]++;
+#endif
+    pair_key[best] = key + 1;
+    pair_stamp[best] = xframe;
+    dst = stage + stage_len;
+    {
+        u32 *z = (u32 *)dst;
+        for (k = 0; k < 128; k++)
+            z[k] = 0;
+    }
+    {
+        const u8 *src = spr_tiles + b->tile * 32, *lut = pal_lut + ((info >> 8) & 15) * 256;
+        pair_put(dst, src, lut, -pair_ox, -pair_oy, info | 1);
+        pair_put(dst, src, lut, dx - pair_ox, dy - pair_oy, info);
+    }
+    k = CACHE_B_BASE + (CACHE_B_SLOTS - PAIR_SLOTS + best) * 16;
+    up[nup].vram = k * 32;
+    up[nup].off = stage_len;
+    up[nup].words = 16 * 16;
+    nup++;
+    stage_len += 512;
+    return k;
+}
+
+/* src/plane.c, each frame: a boss or a mid boss about: xsp_set looks for
+ * laser pairs (src/xsp_fast.s h_xsp_set_boss), with credit for a composite in
+ * each slot to begin with; else (the stages, the small enemies' lasers) the
+ * calls go straight to h_xsp_set_main, no look at all */
+void xsp_route(int on);
+void xsp_pairs(int on)
+{
+    static u8 was;
+    if (on && !was) {
+        pair_credit = PAIR_CREDIT;
+        pair_frame = xframe - 1;
+    }
+    was = on;
+    xsp_route(on);
+}
+
 /* the BG set in use takes VRAM tiles 1..bg_end - 1: the 4-tile slots start
  * there; every cached block is dropped (src/bg.c, between two frames) */
 void plane_fx_forget(void);
@@ -316,26 +427,19 @@ void xsp_cache_layout(u16 bg_end)
         htab[i].key = KEY_EMPTY;
     for (i = 0; i < MESH_MAX; i++)
         mesh_blk[i] = 0;
+    for (i = 0; i < PAIR_SLOTS; i++)
+        pair_key[i] = 0;
     plane_fx_forget();                      /* (its held effect cells use cached tiles) */
 }
 
-/* refs src/plane.c looks for: effects (expl2 / expl3, flare) and the large
- * enemies; xobj_set notes their calls in pl_ix (a bit per ref) */
-u8 pl_refmap[(NREF + 7) / 8];
-static void refmap_set(u16 lo, u16 hi)
-{
-    for (; lo <= hi; lo++)
-        pl_refmap[lo >> 3] |= 1 << (lo & 7);
-}
+/* refs src/plane.c looks for, a bit per ref: effects (expl2 / expl3 $B6-$BF,
+ * flare $AA9-$AAE) and the large enemies (obj200 body $B18, crab .. obj205
+ * core $B1E-$B31, obj21f $B79-$B7A); xobj_set notes their calls in pl_ix */
+const u8 pl_refmap[(NREF + 7) / 8] = { [22] = 0xc0, [23] = 0xff, [341] = 0x7e, [355] = 0xc1, [356] = 0xff, [357] = 0xff, [358] = 0x03, [367] = 0x06 };
 
 void xsp_init(void)
 {
     u16 i;
-    refmap_set(0x0B6, 0x0BF);               /* expl2 / expl3 */
-    refmap_set(0xAA9, 0xAAE);               /* flare */
-    refmap_set(0xB18, 0xB18);               /* obj200 body */
-    refmap_set(0xB1E, 0xB31);               /* crab, obj204 .. obj205 core */
-    refmap_set(0xB79, 0xB7A);               /* obj21f */
     for (i = 0; i < NSLOT; i++)
         slot_ent[i] = NO_ENTRY;
     for (i = 0; i < HASH_SIZE; i++)

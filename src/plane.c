@@ -54,6 +54,7 @@ extern volatile u8 bg_on;               /* (bg.c) */
 extern const s16 size_w[16], size_h[16];
 u16 xsp_tile_for(u16 block, u8 pal, u8 mesh, u16 *key);
 void xsp_touch(u16 key);
+void xsp_pairs(int on);                 /* src/xsp.c */
 
 static u8 loaded = 0xFF, loading = 0xFF;
 static u16 load_pos;
@@ -421,7 +422,7 @@ static u8 on_screen(const Call *c, s8 img)
 void plane_frame(void)
 {
     s16 best = -1, bd = 0x7FFF, top;
-    u8 nbomb = 0;
+    u8 nbomb = 0, big = 0;
     u16 nfx;
     s8 img = -1;
     u16 i, fx = 0;
@@ -442,6 +443,7 @@ void plane_frame(void)
             }
             continue;
         }
+        big |= id < REF_O21F;           /* (pl_refmap: the bosses and mid bosses below obj21f) */
         if (img == 2 || img >= IMG_O205)
             continue;
         if (id == REF_BOSS || (u16)(id - REF_O205) <= 6) {      /* a boss: before anything else */
@@ -482,6 +484,7 @@ void plane_frame(void)
     }
     if (fx > FX_CALLS)
         fx = FX_CALLS;                  /* (the rest stay sprites) */
+    xsp_pairs(big);                     /* a boss / mid boss about: its lasers paired */
     if (best >= 0) {
         u8 g = plane_img[img].group;
         if (loaded != g) {

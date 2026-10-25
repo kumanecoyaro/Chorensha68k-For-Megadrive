@@ -50,6 +50,9 @@ SECTIONS
     _rom_end = _etext + (_edata - _sdata);
 
     ASSERT(SIZEOF(.boot) <= 0x10000, "boot section overlaps ORIG_ROM")
+    /* the stack (crt0.s: $FFFE00, growing down) needs about 2 KB: the original
+       code's frames, the VBlank interrupt (a smaller one corrupted variables) */
+    ASSERT(_ebss <= 0xFFF600, "RAM: less than 2 KB left for the stack")
 
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame) }
 }

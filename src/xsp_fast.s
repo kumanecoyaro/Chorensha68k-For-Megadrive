@@ -33,6 +33,10 @@
     .set    ARC_HI, 0x0B5                   | PCG): every other PCG, alternately by frame
     .set    PL_MAX, 64                      | pl_ix entries (src/plane.c)
     .set    FX_MAX, 28                      | at most this many effect sprites
+    .set    LASER_LO, 0x50                  | laser segment PCGs (16 angles, thick / thin):
+    .set    LASER_HI, 0x5F                  | paired into 32x32 sprites
+    .set    PSHOT_PR, 0x3A                  | the player's shots: drawn before the enemy
+    .set    PSHOT_TO, 0x3D                  | bullets ($3C) when sprites run short
     .set    DEBRIS_LO, 0x0B4                | debris.sp (particles): not drawn
     .set    DEBRIS_HI, 0x104
 
@@ -71,13 +75,20 @@ record:
 h_xsp_set_obj:
     movem.l %d1-%d3, -(%sp)
     movem.w (%a0), %d0-%d3
-    bsr.s   h_xsp_set
+    jsr     xsp_set_vec
     movem.l (%sp)+, %d1-%d3
     rts
 
 | xsp_set (the original clobbers d0/a0): recorded here directly (record,
-| inlined: the bullets make up most calls)
-h_xsp_set:
+| inlined: the bullets make up most calls).  The hook jumps through
+| xsp_set_vec (RAM): h_xsp_set_main, or h_xsp_set_boss while a boss or a mid
+| boss is about (src/xsp.c xsp_pairs): their lasers paired
+h_xsp_set_boss:
+    move.w  %d2, %a0
+    sub.w   #LASER_LO, %a0
+    cmp.w   #LASER_HI - LASER_LO, %a0
+    bls     20f                         | a laser segment: maybe a pair
+h_xsp_set_main:
     cmp.w   #0x4400, %d0
     bcc     9f
     cmp.w   #0x4400, %d1
@@ -104,7 +115,10 @@ h_xsp_set:
     move.w  %d3, (%a0)
     moveq   #63, %d0
     and.w   %d3, %d0                    | priority list
-    lea     call_next, %a0              | (bhead = call_next - 128)
+    cmp.w   #PSHOT_PR, %d0
+    bne.s   3f
+    moveq   #PSHOT_TO, %d0
+3:  lea     call_next, %a0              | (bhead = call_next - 128)
     move.b  -128(%a0,%d0.w), 0(%a0,%d4.w)
     move.b  %d4, -128(%a0,%d0.w)
     addq.w  #1, ncalls
@@ -119,6 +133,73 @@ h_xsp_set:
     rts
 9:  moveq   #0, %d0
     rts
+
+| A laser segment (rows of bullets change their spacing every frame: no
+| reuse) next to the same segment (same attributes) just recorded at this
+| priority, both within 32x32: the two become one 32x32 sprite (xsp_build,
+| xsp.c pair_tile): info bit 12, the offset in the first one's x / y
+| fraction bits (the sprites only use whole pixels)
+20: cmp.w   #0x4400, %d0               | (as h_xsp_set_main)
+    bcc     9b
+    cmp.w   #0x4400, %d1
+    bcc     9b
+    movem.l %d4-%d6/%a1, -(%sp)
+    moveq   #63, %d4
+    and.w   %d3, %d4                    | priority
+    lea     call_next, %a0
+    moveq   #0, %d5
+    move.b  -128(%a0,%d4.w), %d5        | the last calls of this priority (the
+    swap    %d4                         | two beams of a pair of lasers come in
+    move.w  #3, %d4                     | turns): up to 4 back
+4:  cmp.b   #-1, %d5
+    beq     25f
+    move.w  %d5, %a0                    | (its index)
+    lsl.w   #3, %d5
+    lea     calls, %a1
+    add.w   %d5, %a1
+    move.w  %d2, %d5
+    bset    #15, %d5
+    cmp.w   4(%a1), %d5                 | the same PCG
+    bne.s   6f
+    move.w  %d3, %d5
+    bclr    #12, %d5
+    cmp.w   6(%a1), %d5                 | the same info, not paired yet
+    bne.s   6f
+    move.w  (%a1), %d5
+    asr.w   #6, %d5
+    move.w  %d0, %d6
+    asr.w   #6, %d6
+    sub.w   %d5, %d6
+    add.w   #16, %d6                    | dx + 16 in 0..32
+    cmp.w   #32, %d6
+    bhi.s   6f
+    move.w  2(%a1), %d5
+    asr.w   #6, %d5
+    swap    %d4                         | (low word: free, the count kept in the high one)
+    move.w  %d1, %d4
+    asr.w   #6, %d4
+    sub.w   %d5, %d4
+    add.w   #16, %d4                    | dy + 16 in 0..32
+    cmp.w   #32, %d4
+    bls.s   3f
+    swap    %d4
+6:  move.w  %a0, %d5                    | next back in the list
+    lea     call_next, %a0
+    move.b  0(%a0,%d5.w), %d5
+    and.w   #0xFF, %d5
+    dbra    %d4, 4b
+    bra.s   25f
+3:  bset    #6, 4(%a1)                  | id bit 14 (as a text cell: xsp_build looks
+    bset    #4, 6(%a1)                  | there) and info bit 12: a pair, dx + 16 / dy + 16 in
+    and.w   #0xFFC0, (%a1)              | the first one's x / y fraction bits (the
+    or.w    %d6, (%a1)                  | sprites only use whole pixels)
+    and.w   #0xFFC0, 2(%a1)
+    or.w    %d4, 2(%a1)
+    movem.l (%sp)+, %d4-%d6/%a1
+    moveq   #1, %d0
+    rts
+25: movem.l (%sp)+, %d4-%d6/%a1
+    bra     h_xsp_set_main
 
 | xobj_set (the original clobbers d0-d4/a0-a2)
 | Sprite budget (64 per frame): the player ship is drawn before everything
@@ -267,7 +348,7 @@ xsp_build:
     sub.w   #16, %d1                    | sy
     cmp.w   #223, %d1                   | sy <= 223 (>= -16 as x)
     bgt     70f
-    add.w   %d2, %d2                    | (bit 15 shifted out)
+18: add.w   %d2, %d2                    | (bit 15 shifted out)
     lea     pcg_block, %a1
     move.w  0(%a1,%d2.w), %d4
     move.w  2(%a3), %d3                 | info
@@ -300,13 +381,70 @@ xsp_build:
     move.w  %d4, (%a0)+
     add.w   #128, %d0
     move.w  %d0, (%a0)+
+    tst.b   pair_two
+    bne.s   17f
     bra     70f
 12: bsr     lookup_slow
     bne.s   11b
+    sf      pair_two
+    bra     70f
+17: sf      pair_two                    | the second PCG of a pair not composed:
+    cmp.w   hw_limit, %d7               | the same tile at the offset
+    bcc     70f
+    moveq   #63, %d1
+    and.w   -2(%a3), %d1
+    sub.w   #16, %d1
+    add.w   -8(%a0), %d1
+    move.w  %d1, (%a0)+
+    addq.w  #1, %d7
+    move.w  %d7, %d3
+    or.w    #0x0500, %d3
+    move.w  %d3, (%a0)+
+    move.w  -8(%a0), (%a0)+
+    moveq   #63, %d1
+    and.w   -4(%a3), %d1
+    sub.w   #16, %d1
+    add.w   -8(%a0), %d1
+    move.w  %d1, (%a0)+
     bra     70f
 
-| -- text cell (x, y in pixels)
-20: move.w  2(%a3), %d1
+| -- a pair of PCGs: one 32x32 sprite (xsp.c pair_tile composes it)
+16: movem.l %d0-%d1/%a0-%a1, -(%sp)    | (C clobbers d0 / d1 / a0 / a1)
+    moveq   #0, %d0
+    move.w  16(%sp), %d0                | the call index
+    move.l  %d0, -(%sp)
+    jsr     pair_tile
+    addq.l  #4, %sp
+    move.w  %d0, %d4                    | tile, 0: not now (the two as they are)
+    movem.l (%sp)+, %d0-%d1/%a0-%a1
+    tst.w   %d4
+    bne.s   19f
+    st      pair_two
+    bra     18b
+19:
+    add.w   pair_ox, %d0
+    add.w   pair_oy, %d1
+    move.w  2(%a3), %d3
+    lsr.w   #8, %d3
+    and.w   #15, %d3
+    add.w   %d3, %d3
+    lea     pal_attr, %a1
+    or.w    0(%a1,%d3.w), %d4           | (the flips are in the composite)
+    add.w   #128, %d1
+    move.w  %d1, (%a0)+
+    addq.w  #1, %d7
+    move.w  %d7, %d3
+    or.w    #0x0F00, %d3                | 4x4 cells | link
+    move.w  %d3, (%a0)+
+    move.w  %d4, (%a0)+
+    add.w   #128, %d0
+    move.w  %d0, (%a0)+
+    bra     70f
+
+| -- text cell (x, y in pixels), or a pair (info bit 12, h_xsp_set_boss)
+20: btst    #4, 6(%a3)
+    bne.s   15f
+    move.w  2(%a3), %d1
     add.w   #128, %d1
     move.w  %d1, (%a0)+
     addq.w  #1, %d7
@@ -318,6 +456,16 @@ xsp_build:
     add.w   #128, %d0
     move.w  %d0, (%a0)+
     bra     70f
+15: bclr    #14, %d2                    | the pair's first PCG: as a single one
+    move.w  (%a3)+, %d0
+    asr.w   #6, %d0
+    sub.w   #16, %d0
+    move.w  (%a3)+, %d1
+    asr.w   #6, %d1
+    sub.w   #16, %d1
+    cmp.w   #223, %d1
+    bgt     70f
+    bra     16b
 
 | -- composite ref
 30: move.w  (%a3), %d0
@@ -494,6 +642,152 @@ lookup_slow:
     tst.w   %d4
     rts
 
+| pair_put(dst, src, lut, ox, oy, flips) (src/xsp.c pair_tile): a 16x16 PCG
+| into the 32x32 composite at dst (MD sprite tile order: 8x8 tiles column by
+| column) at (ox, oy) (0..16), flipped (flips bit 0: onto an empty one).  The
+| rows first converted (lut: a byte of two pixels) and flipped into a buffer,
+| shifted by a pixel for an odd ox, then laid over the composite a byte at a
+| time where not 0
+    .globl  pair_put
+    .set    PP_ARGS, 44 + 180 + 4
+pair_put:
+    movem.l %d2-%d7/%a2-%a6, -(%sp)
+    lea     -180(%sp), %sp              | 16 rows x 10 bytes, the 9 byte offsets
+    move.l  PP_ARGS(%sp), %a0           | dst
+    move.l  PP_ARGS + 4(%sp), %a2       | src
+    move.l  PP_ARGS + 8(%sp), %a3       | lut
+    move.w  PP_ARGS + 14(%sp), %d4      | ox
+    move.w  PP_ARGS + 18(%sp), %d5      | oy
+    move.w  PP_ARGS + 22(%sp), %d6      | flips
+    move.l  %sp, %a1
+    moveq   #0, %d7                     | row
+1:  move.w  %d7, %d0
+    tst.w   %d6
+    bpl.s   2f
+    eor.w   #15, %d0                    | (V flip)
+2:  move.w  %d0, %d1
+    and.w   #7, %d1
+    lsl.w   #2, %d1
+    lsr.w   #3, %d0
+    lsl.w   #5, %d0
+    add.w   %d1, %d0
+    lea     0(%a2,%d0.w), %a4           | the row in the left tiles (the right: + 64)
+    moveq   #0, %d1
+    btst    #14, %d6
+    bne.s   3f
+    .rept   4
+    move.b  (%a4)+, %d1
+    move.b  0(%a3,%d1.w), (%a1)+
+    .endr
+    lea     60(%a4), %a4
+    .rept   4
+    move.b  (%a4)+, %d1
+    move.b  0(%a3,%d1.w), (%a1)+
+    .endr
+    bra.s   4f
+3:  addq.l  #8, %a1                     | H flip: backwards, the pixels of a byte swapped
+    .rept   4
+    move.b  (%a4)+, %d1
+    move.b  0(%a3,%d1.w), %d0
+    rol.b   #4, %d0
+    move.b  %d0, -(%a1)
+    .endr
+    lea     60(%a4), %a4
+    .rept   4
+    move.b  (%a4)+, %d1
+    move.b  0(%a3,%d1.w), %d0
+    rol.b   #4, %d0
+    move.b  %d0, -(%a1)
+    .endr
+    addq.l  #8, %a1
+4:  btst    #0, %d4
+    beq.s   5f
+    move.l  -8(%a1), %d0                | odd ox: a pixel to the right (9 bytes)
+    move.l  -4(%a1), %d1
+    move.b  %d1, %d2
+    lsl.b   #4, %d2
+    move.b  %d2, (%a1)
+    lsr.l   #4, %d1
+    moveq   #15, %d2
+    and.l   %d0, %d2
+    ror.l   #4, %d2
+    or.l    %d2, %d1
+    lsr.l   #4, %d0
+    move.l  %d0, -8(%a1)
+    move.l  %d1, -4(%a1)
+5:  addq.l  #2, %a1
+    addq.w  #1, %d7
+    cmp.w   #16, %d7
+    bne     1b
+    lea     160(%sp), %a5               | composite offsets of the bytes of a row
+    move.w  %d4, %d0
+    lsr.w   #1, %d0                     | byte k = ox / 2 + j: (k / 4) * 128 + k % 4
+    moveq   #7, %d3
+    btst    #0, %d4
+    beq.s   6f
+    moveq   #8, %d3
+6:  move.w  %d3, %d7
+7:  move.w  %d0, %d1
+    and.w   #3, %d1
+    move.w  %d0, %d2
+    lsr.w   #2, %d2
+    lsl.w   #7, %d2
+    add.w   %d2, %d1
+    move.w  %d1, (%a5)+
+    addq.w  #1, %d0
+    dbra    %d7, 7b
+    lea     nib_mask, %a6
+    move.l  %sp, %a1
+    moveq   #15, %d7
+8:  move.w  %d5, %d0                    | composite row oy + row
+    move.w  %d0, %d1
+    and.w   #7, %d1
+    lsl.w   #2, %d1
+    lsr.w   #3, %d0
+    lsl.w   #5, %d0
+    add.w   %d1, %d0
+    lea     0(%a0,%d0.w), %a4
+    lea     160(%sp), %a5
+    move.l  %a1, %a2
+    move.w  %d3, %d6
+    moveq   #0, %d0
+    btst    #0, PP_ARGS + 23(%sp)
+    beq.s   9f
+11: move.w  (%a5)+, %d1                 | (onto an empty composite)
+    move.b  (%a2)+, 0(%a4,%d1.w)
+    dbra    %d6, 11b
+    bra.s   12f
+9:  move.w  (%a5)+, %d1
+    move.b  (%a2)+, %d0
+    beq.s   10f
+    move.b  0(%a6,%d0.w), %d2
+    not.b   %d2
+    and.b   %d2, 0(%a4,%d1.w)
+    or.b    %d0, 0(%a4,%d1.w)
+10: dbra    %d6, 9b
+12: lea     10(%a1), %a1
+    addq.w  #1, %d5
+    dbra    %d7, 8b
+    lea     180(%sp), %sp
+    movem.l (%sp)+, %d2-%d7/%a2-%a6
+    rts
+
+| xsp_route(on) (src/xsp.c xsp_pairs): laser pairs (h_xsp_set_boss) or not
+    .globl  xsp_route
+xsp_route:
+    move.l  #h_xsp_set_main, %d0
+    tst.b   7(%sp)
+    beq.s   1f
+    move.l  #h_xsp_set_boss, %d0
+1:  move.l  %d0, xsp_set_vec + 2
+    rts
+
+    .data
+    .balign 2
+xsp_set_vec: .word 0x4EF9               | jmp h_xsp_set_main / h_xsp_set_boss
+    .long   h_xsp_set_main
+    .set    h_xsp_set, xsp_set_vec
+
     .section .note.GNU-stack,"",%progbits
 
     .bss
@@ -506,6 +800,7 @@ pl_n:        .word 0                    | calls src/plane.c looks at: count, ind
 pl_ix:       .space 64
 hw_limit:    .word 0
 fx_cap:      .word 0
+pair_two:    .byte 0                    | xsp_build: the pair at hand drawn as two sprites
     .balign 2
 stat_pieces: .long 0
 stat_calls:  .long 0
