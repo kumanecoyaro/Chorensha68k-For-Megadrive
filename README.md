@@ -25,7 +25,7 @@ X68000 もメガドライブも CPU は 68000 なので、ゲームロジック�
 | 原作 | MD 版 |
 |---|---|
 | XSP（スプライト: xsp_set / xobj_set） | 全 PCG・全 ref を MD スプライトブロックに変換済み（`tools/convert_sprites.py`）。2 枚以上の 16x16 PCG で組まれた ref は最大 32x32 のブロックに合成（32x32 に収まる敵は 1 枚）。VRAM はタイルキャッシュ（LRU）、X68000 の 16 パレットは MD の 2 パレットに減色マップ。XSP と同じく呼び出しを優先度別に記録し、手前から 64 枚まで展開（`src/xsp_fast.s`） |
-| 大型の敵（1 面: 蟹型 obj202・ボス obj204）、自機のボム、ボスの特殊爆発 | Plane A に表示（スプライトを使わない）。敵は合成済みの 1 枚絵で同時に 1 体（残りと被弾フラッシュはスプライト）、エフェクトはスプライト用ブロックのタイルを 8 px 格子に並べる |
+| 大型の敵（1 面: 蟹型 obj202・蟹を早く倒すと出る obj21f・ボス obj204）、自機のボム、ボスの特殊爆発 | Plane A に表示（スプライトを使わない）。敵は合成済みの 1 枚絵で同時に 1 体（残りと被弾フラッシュはスプライト）、エフェクトはスプライト用ブロックのタイルを 8 px 格子に並べる |
 | グラフィック VRAM への BG チップ描画 | 原作のスクロール処理はそのまま。近景・遠景の 2 層を Plane B 1 枚に合成（多重スクロールなし、近景の速度で一緒に動く）。近景の半透明タイルは遠景と合成済みのタイルを必要な分だけ VRAM に置く |
 | テキスト VRAM | スコア行はウィンドウ面、他の行（残機・ボム表示、メッセージ）は Plane A（大型敵・エフェクト表示中はスプライト）。フォントは原作の SZ_TEXT.pcg（4 プレーン、原作と同じくスプライトパレット 2 の色） |
 | IOCS ジョイスティック | MD パッド（A ショット / B ボム / C 連射 / START ポーズ） |
@@ -91,7 +91,7 @@ make XDF=path/to/CH68_110_1.xdf
 | `tools/z80_pcm_driver.py` | Z80 ドライバ生成（DAC 再生 + YM2612 書き込みキュー） |
 | `tools/mdx.py`, `tools/convert_bgm.py` | MDX 解析 / チャンネル割り当て・音程表の生成 |
 | `tools/rom_budget.py` | ROM サイズ集計 |
-| `tools/build_variant.sh` | デバッグ用ビルド（`-DTEST_MUTEKI` 無敵, `-DFRAME_PROBE` 処理時間計測, `-DPLANE_ONLY` プレーンAだけ表示, `-DZ80_PEEK` ほか） |
+| `tools/build_variant.sh` | デバッグ用ビルド（`-DTEST_MUTEKI` 無敵, `-DFRAME_PROBE` 処理時間計測, `-DPLANE_ONLY` プレーンAだけ表示, `-DTEST_CRAB_HP1` 1 面の蟹が一撃で死ぬ（obj21f の確認用）, `-DZ80_PEEK` ほか） |
 | `tools/fixrom.py` | ROM ヘッダとチェックサムの設定 |
 | `tools/mdrun.py` | libretro コア（Genesis Plus GX）でのヘッドレス実行・スクリーンショット |
 | `tools/uctrace.py` | unicorn の 68000 で ROM を実行（ROM 書き込み検出・プロファイル・命令数計測） |

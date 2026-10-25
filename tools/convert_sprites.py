@@ -45,6 +45,10 @@ PLANE_GROUPS = [
     [   # obj204 stage 1 boss
         [('obj204', 0, 0, 7)],
     ],
+    [   # obj21f (two of them after a quickly destroyed crab): $B79, $B7A after it fires
+        [('obj21f', 0, 0, 7)],
+        [('obj21f', 1, 0, 7)],
+    ],
 ]
 BOMB_REFS = list(range(0xB6, 0xC0)) + list(range(0xAA9, 0xAAF))   # expl2 / expl3 / flare (src/plane.c is_effect)
 BOMB_PALS = (1, 3, 5, 12)  # X68000 palettes the bomb draws them with (info $x13F / $xC3F ...)

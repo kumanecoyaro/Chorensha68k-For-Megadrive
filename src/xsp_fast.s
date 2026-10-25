@@ -160,7 +160,7 @@ h_xobj_set:
     cmp.w   ncalls, %d4                 | (not recorded: the list is full)
     beq     9f
     move.w  %d2, %d1                    | refs src/plane.c looks for: effects, the
-    sub.w   #0x0B6, %d1                 | crab and the boss -> pl_ix
+    sub.w   #0x0B6, %d1                 | crab, the boss and obj21f -> pl_ix
     cmp.w   #0x0BF - 0x0B6, %d1
     bls.s   5f
     move.w  %d2, %d1
@@ -170,6 +170,9 @@ h_xobj_set:
     move.w  %d2, %d1
     sub.w   #0xB1E, %d1
     cmp.w   #0xB29 - 0xB1E, %d1
+    bls.s   5f
+    sub.w   #0xB79 - 0xB1E, %d1
+    cmp.w   #0xB7A - 0xB79, %d1
     bhi     9f
 5:  move.w  pl_n, %d1
     cmp.w   #PL_MAX, %d1

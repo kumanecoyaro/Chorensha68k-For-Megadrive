@@ -35,6 +35,7 @@
 #define EMPTY_REF  REF_EMPTY            /* a dropped call (spr.h: a ref without pieces) */
 #define REF_CRAB   0xB1E                /* obj202: left half, right half, centre */
 #define REF_BOSS   0xB29                /* obj204 */
+#define REF_O21F   0xB79                /* obj21f, $B7A after it fires (images 3, 4) */
 #define LOAD_CHUNK 64                   /* tiles per VBlank */
 #define WROWS      29                   /* plane rows on screen (224 lines + fine scroll) */
 
@@ -187,7 +188,7 @@ static u8 put_ref(const Call *cl, s16 top)
  * sprite, over it) */
 static void drop_image_calls(s8 img, Call *c)
 {
-    if (img == 2) {
+    if (img >= 2) {
         if (pal_of(c) == 7)
             c->id = EMPTY_REF;
     } else {
@@ -377,20 +378,27 @@ void plane_frame(void)
             }
             continue;
         }
-        if ((u16)(id - REF_CRAB) > REF_BOSS - REF_CRAB || img == 2)
+        if (img == 2)
             continue;
         if (id == REF_BOSS) {
             best = i; img = 2;
             boss_seen = 1;
             continue;
         }
-        if (id == REF_CRAB + 2 && i >= 2 && c[-2].id == REF_CRAB && c[-1].id == REF_CRAB + 1
-            && c[-2].y == c->y && c[-1].y == c->y) {
-            s16 d = (c->x >> 6) - ax, e = (c->y >> 6) - ay;
-            d = (d < 0 ? -d : d) + (e < 0 ? -e : e);
-            if (shown < 0 || d < bd) {
-                bd = d; best = i;
-                img = ((c->x - c[-2].x) >> 6) <= 2 ? 0 : 1;
+        {
+            s8 im = -1;
+            if (id == REF_CRAB + 2 && i >= 2 && c[-2].id == REF_CRAB && c[-1].id == REF_CRAB + 1
+                && c[-2].y == c->y && c[-1].y == c->y)
+                im = ((c->x - c[-2].x) >> 6) <= 2 ? 0 : 1;
+            else if ((u16)(id - REF_O21F) <= 1)
+                im = 3 + (id - REF_O21F);
+            if (im >= 0) {
+                /* of two: the one already shown (nearest) */
+                s16 d = (c->x >> 6) - ax, e = (c->y >> 6) - ay;
+                d = (d < 0 ? -d : d) + (e < 0 ? -e : e);
+                if (shown < 0 || d < bd) {
+                    bd = d; best = i; img = im;
+                }
             }
         }
     }

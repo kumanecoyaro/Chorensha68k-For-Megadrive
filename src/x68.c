@@ -131,6 +131,15 @@ long x_vsync(long n)
 #ifdef TEST_MUTEKI
     OW(0x4a104) = 1;                /* original debug option: no death (the title resets it) */
 #endif
+#ifdef TEST_CRAB_HP1
+    {                               /* stage 1 crabs (obj202) die at the first hit: obj21f */
+        u16 k;
+        if (OW(0x59328) == 0x118)
+            for (k = 0; k < 0x17F; k++)
+                if (OW(0x4d39e + k * 0x80 + 0x22) == 0x202 && OW(0x4d39e + k * 0x80 + 0x5c) > 1)
+                    OW(0x4d39e + k * 0x80 + 0x5c) = 1;
+    }
+#endif
     waited = frame_ready;
     PROBE(0);
     return waited;
