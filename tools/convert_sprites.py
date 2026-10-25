@@ -36,7 +36,7 @@ REF_EXTRA = {'sonic2': [('ele_arc', 0x50)], 'spark': [('debris1', 0xC4)]}
 TEXT_XPAL = 2          # X68000 sprite palette used as the text palette
 # large enemies drawn on plane A (src/plane.c): groups of images (one group's
 # tiles are in VRAM at a time); image = refs (file, index, x offset, object
-# palette[, y offset, H flip]) composited in drawing order (later = front)
+# palette) composited in drawing order (later = front)
 PLANE_GROUPS = [
     [   # obj202 crab: halves 0..4 px apart, as two images (0 and 4 px)
         [('obj202', 0, 0, 6), ('obj202', 1, 0, 6), ('obj202', 2, 0, 5)],
@@ -44,13 +44,6 @@ PLANE_GROUPS = [
     ],
     [   # obj204 stage 1 boss
         [('obj204', 0, 0, 7)],
-    ],
-    [   # obj201 (two of them after a quickly destroyed crab): wings $B1C 16..29 px
-        # either side of the body $B1B, 8..9.6 px above it; open: the parts $B1D
-        # below.  Only the closed and the fully open states (the others are short)
-        [('obj201', 1, -16, 3, -8), ('obj201', 1, 16, 3, -8, 1), ('obj201', 0, 0, 3)],
-        [('obj201', 1, -29, 3, -10), ('obj201', 1, 29, 3, -10, 1), ('obj201', 0, 0, 3),
-         ('obj201', 2, -19, 3, 6), ('obj201', 2, 19, 3, 6, 1)],
     ],
 ]
 BOMB_REFS = list(range(0xB6, 0xC0)) + list(range(0xAA9, 0xAAF))   # expl2 / expl3 / flare (src/plane.c is_effect)
@@ -258,9 +251,7 @@ def main(xsp, out):
         gtiles = TileSet(); first = len(pimg)
         for parts in group:
             pix = {}; mdpal = None
-            for rname, ri, dx, objpal, *opt in parts:
-                dy = opt[0] if opt else 0
-                hf = len(opt) > 1 and opt[1]
+            for rname, ri, dx, objpal in parts:
                 frm, off, cnt, base = ref_src[ref_first[rname] + ri]
                 ax = ay = 0
                 for j in range(cnt):
@@ -274,10 +265,7 @@ def main(xsp, out):
                         for x in range(16):
                             v = px[(15 - y if info & 0x8000 else y) * 16 + (15 - x if info & 0x4000 else x)]
                             if v:
-                                X = ax - 16 + x
-                                if hf:          # the ref mirrored (as src/xsp_fast.s: -dx - 16 - w)
-                                    X = -X - 17
-                                pix[(X + dx, ay - 16 + y + dy)] = lut[xp][v] & 15
+                                pix[(ax - 16 + x + dx, ay - 16 + y)] = lut[xp][v] & 15
             xs = [p[0] for p in pix]; ys = [p[1] for p in pix]
             ox, oy = min(xs), min(ys)
             w = (max(xs) - ox) // 8 + 1; h = (max(ys) - oy) // 8 + 1

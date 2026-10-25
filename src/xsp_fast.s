@@ -159,7 +159,7 @@ h_xobj_set:
     bsr     record
     cmp.w   ncalls, %d4                 | (not recorded: the list is full)
     beq     9f
-    move.w  %d2, %d1                    | refs src/plane.c looks for: effects, obj201, the
+    move.w  %d2, %d1                    | refs src/plane.c looks for: effects, the
     sub.w   #0x0B6, %d1                 | crab and the boss -> pl_ix
     cmp.w   #0x0BF - 0x0B6, %d1
     bls.s   5f
@@ -168,8 +168,8 @@ h_xobj_set:
     cmp.w   #0xAAE - 0xAA9, %d1
     bls.s   5f
     move.w  %d2, %d1
-    sub.w   #0xB1B, %d1                 | (obj201 $B1B-$B1D, crab $B1E-$B20 .. boss $B29)
-    cmp.w   #0xB29 - 0xB1B, %d1
+    sub.w   #0xB1E, %d1
+    cmp.w   #0xB29 - 0xB1E, %d1
     bhi     9f
 5:  move.w  pl_n, %d1
     cmp.w   #PL_MAX, %d1
