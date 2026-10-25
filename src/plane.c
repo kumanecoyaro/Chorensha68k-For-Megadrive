@@ -74,6 +74,18 @@ static s8 st_img = -2;                  /* image written by write_static (-2: no
 static u32 st_cols;
 static u8 was_fx;                       /* effects last frame */
 static s16 hs, vs;                      /* plane A scroll: col c at x = c*8 + hs, row r at y = r*8 - vs */
+/* two battleships (stage 4's last part: always one above the other): the
+ * wing of the second one in plane rows 32.., shown from line split on with
+ * scroll hs2 / vs2 (the H-int, src/xsp_fast.s _hint) */
+#define WING_MAX   8
+static u16 split;                       /* 0: one image */
+static s16 hs2, vs2;
+static s16 ax2, ay2 = -999;             /* anchor of the second wing (kept while it lasts) */
+static s8 st_img2 = -1;
+static u32 st_cols2;
+static s16 act_hs, act_vs, act_hs2, act_vs2;    /* of the frame shown (plane_vblank) */
+static u16 act_split;
+extern u16 split_line, split_vs, split_hs, act_n;
 
 static u16 win[WROWS][32];              /* visible rows, window row k = plane row top + k */
 static u32 win_nz;                      /* window rows holding something */
@@ -269,45 +281,56 @@ static void clear_win_rows(void)
         }
     win_nz = 0;
 }
-/* image rows into plane rows 0..h-1 (built in win[]), the other rows that
- * hold something cleared */
-static u16 zero_row[32];
-static void write_static(s8 img, u32 cols)
+/* image rows into window rows k.. (cols: lo << 16 | hi + 1, the columns on
+ * screen); returns the number of rows */
+static u8 build_rows(s8 img, u32 cols, u8 mir, u8 k)
 {
-    u8 r, c, h = 0, pr, half;
-    u32 rows;
-    clear_win_rows();
-    if (img >= 0) {
-        const PlaneImg *im = &plane_img[img];
-        const u16 *m = plane_map + im->map;
-        u16 attr = ((u16)im->pal << 13) + ENEMY_BASE - 1;
-        h = im->h;
-        u8 lo = cols >> 16, hi = (u8)cols - 1;
-        for (r = 0; r < h; r++, m += im->w) {
-            u16 *d = win[r];
-            if (!cols)
-                continue;
-            for (c = lo; c <= hi; c++) {
-                u8 k = mirror ? im->w - 1 - c : c;
-                d[c & 31] = m[k] ? (attr + m[k]) ^ (mirror ? 0x800 : 0) : 0;
-            }
+    const PlaneImg *im = &plane_img[img];
+    const u16 *m = plane_map + im->map;
+    u16 attr = ((u16)im->pal << 13) + ENEMY_BASE - 1;
+    u8 r, c, lo = cols >> 16, hi = (u8)cols - 1;
+    for (r = 0; r < im->h; r++, m += im->w) {
+        u16 *d = win[k + r];
+        if (!cols)
+            continue;
+        for (c = lo; c <= hi; c++) {
+            u8 j = mir ? im->w - 1 - c : c;
+            d[c & 31] = m[j] ? (attr + m[j]) ^ (mir ? 0x800 : 0) : 0;
         }
-        win_nz = (1UL << h) - 1;        /* (cleared by the full path when it takes over) */
     }
+    return im->h;
+}
+
+/* image rows into plane rows 0..h-1, a second image (img2 >= 0) into plane
+ * rows 32..32+h2-1 (built in win[]), the other rows that hold something
+ * cleared */
+static u16 zero_row[32];
+static void write_static(s8 img, u32 cols, u8 mir, s8 img2, u32 cols2, u8 mir2)
+{
+    u8 h = 0, h2 = 0, pr, half;
+    u32 rows[2];
+    clear_win_rows();
+    if (img >= 0)
+        h = build_rows(img, cols, mir, 0);
+    if (img2 >= 0)
+        h2 = build_rows(img2, cols2, mir2, h);
+    win_nz = (1UL << (h + h2)) - 1;     /* (cleared by the full path when it takes over) */
+    rows[0] = (1UL << h) - 1;
+    rows[1] = (1UL << h2) - 1;
     /* rows to write: the image rows, and the other rows that hold something */
     wr_n = 0;
-    rows = win_nz;
     for (half = 0; half < 2; half++) {
-        u32 v = vram_nz[half] | (half ? 0 : rows);
+        u32 v = vram_nz[half] | rows[half];
         for (pr = half << 5; v; v >>= 1, pr++)
             if (v & 1) {
+                u8 r = pr & 31;
                 wr_row[wr_n] = pr;
-                wr_win[wr_n] = pr < h ? pr : 0xFF;
+                wr_win[wr_n] = half ? (r < h2 ? h + r : 0xFF) : (r < h ? r : 0xFF);
                 wr_n++;
             }
     }
-    vram_nz[0] = rows;
-    vram_nz[1] = 0;
+    vram_nz[0] = rows[0];
+    vram_nz[1] = rows[1];
 }
 
 #define FX_CALLS 64                     /* effect calls handled per frame */
@@ -370,11 +393,12 @@ u8 plane_text_refresh(void)
     if (st_img != ST_TEXT && (shown >= 0 || was_fx || st_img >= 0))
         return text_on_plane = 0;
     hs = vs = 0;
+    split = 0;
     if (text_rows()) {
         write_text();
         st_img = ST_TEXT;
     } else if (st_img == ST_TEXT) {
-        write_static(-1, 0);
+        write_static(-1, 0, 0, -1, 0, 0);
         st_img = -1;
     }
     return text_on_plane = 1;
@@ -469,7 +493,10 @@ void plane_frame(void)
     u16 nfx;
     s8 img = -1;
     u16 i, fx = 0;
-    u8 k;
+    u8 k, nwing = 0;
+    u8 wing_ix[WING_MAX];
+    s16 wing_d[WING_MAX];
+    s16 best2 = -1;
     Call *c;
     /* the calls xobj_set noted (src/xsp_fast.s): the large enemy, the effects */
     for (k = 0; k < pl_n; k++) {
@@ -542,6 +569,10 @@ void plane_frame(void)
                     d = (c->x >> 6) - ax;
                     d = (d < 0 ? -d : d) + (e < 0 ? -e : e);
                 }
+                if (im == IMG_WING && nwing < WING_MAX) {
+                    wing_ix[nwing] = i;
+                    wing_d[nwing++] = d;
+                }
                 if (g != loaded)
                     d += g == loading ? 1000 : 2000;
                 if (d < bd) {
@@ -565,6 +596,38 @@ void plane_frame(void)
         }
     }
     shown = img;
+    split = 0;
+    if (img == IMG_WING && !fx && !was_fx && bg_on) {
+        /* a second battleship's wing, above or below the first one with a
+         * gap holding an 8-line boundary (the H-int comes every 8 lines) */
+        const PlaneImg *im = &plane_img[IMG_WING];
+        s16 y1 = (calls[best].y >> 6) + im->oy, hh = im->h * 8, bd2 = 0x7FFF;
+        for (k = 0; k < nwing; k++) {
+            s16 y2, sl, d;
+            i = wing_ix[k];
+            if ((s16)i == best)
+                continue;
+            c = &calls[i];
+            y2 = (c->y >> 6) + im->oy;
+            if (y2 >= y1 + hh)
+                sl = (y1 + hh + 7) & ~7;
+            else if (y1 >= y2 + hh)
+                sl = (y2 + hh + 7) & ~7;
+            else
+                continue;               /* (side by side: the wings of one ship) */
+            if (sl > (y2 > y1 ? y2 : y1))
+                continue;
+            d = wing_d[k];
+            {
+                s16 e = (c->x >> 6) - ax2, f = (c->y >> 6) - ay2;
+                if ((e < 0 ? -e : e) + (f < 0 ? -f : f) < 8)
+                    d -= 1000;          /* the second one shown kept while it lasts */
+            }
+            if (d < bd2) {
+                bd2 = d; best2 = i; split = sl;
+            }
+        }
+    }
     if (img >= 0) {
         const PlaneImg *im = &plane_img[img];
         c = &calls[best];
@@ -587,6 +650,7 @@ void plane_frame(void)
         u32 cols = img >= 0 ? visible_cols(&plane_img[img], hs) : 0;
         wr_n = 0;
         if (img < 0 && text_rows()) {   /* plane A free: the text rows */
+            st_img2 = -1;
             if (st_img != ST_TEXT || text_pl_dirty)
                 write_text();
             st_img = ST_TEXT;
@@ -594,10 +658,38 @@ void plane_frame(void)
             return;
         }
         text_on_plane = 0;
+        if (best2 >= 0) {
+            /* the upper wing in plane rows 0.., the lower one in rows 32.. */
+            const PlaneImg *im = &plane_img[IMG_WING];
+            Call *c2 = &calls[best2];
+            u8 mir2 = (c2->info & 0x4000) != 0, mu, ml;
+            s16 h2 = (c2->x >> 6) + img_left(im, mir2), v2 = (c2->y >> 6) + im->oy;
+            u32 cu, cl;
+            ax2 = c2->x >> 6; ay2 = c2->y >> 6;
+            if (v2 < -vs) {             /* the second one above: it takes rows 0.. */
+                s16 t = hs;
+                hs = h2; hs2 = t;
+                vs2 = 256 + vs; vs = -v2;
+                mu = mir2; ml = mirror;
+            } else {
+                hs2 = h2; vs2 = 256 - v2;
+                mu = mirror; ml = mir2;
+            }
+            cu = visible_cols(im, hs) ^ ((u32)mu << 31);
+            cl = visible_cols(im, hs2) ^ ((u32)ml << 31);
+            if (st_img != IMG_WING || st_img2 != IMG_WING || cu != st_cols || cl != st_cols2)
+                write_static(IMG_WING, cu & 0x7FFFFFFF, mu, IMG_WING, cl & 0x7FFFFFFF, ml);
+            st_img = st_img2 = IMG_WING; st_cols = cu; st_cols2 = cl;
+            drop_image_calls(IMG_WING, &calls[best]);
+            drop_image_calls(IMG_WING, c2);
+            return;
+        }
+        split = 0;
+        ay2 = -999;
         cols ^= (u32)mirror << 31;
-        if (img != st_img || cols != st_cols)
-            write_static(img, cols & 0x7FFFFFFF);
-        st_img = img; st_cols = cols;
+        if (img != st_img || cols != st_cols || st_img2 >= 0)
+            write_static(img, cols & 0x7FFFFFFF, mirror, -1, 0, 0);
+        st_img = img; st_cols = cols; st_img2 = -1;
         if (img >= 0)
             drop_image_calls(img, &calls[best]);
         return;
@@ -609,7 +701,10 @@ void plane_frame(void)
         return;
     thin_phase ^= 1;
     was_fx = fx != 0;
+    split = 0;
+    ay2 = -999;
     st_img = -2;                        /* (the static image is rewritten afterwards) */
+    st_img2 = -1;
     text_on_plane = 0;
     held_n = 0;
 
@@ -641,6 +736,22 @@ void plane_frame(void)
 
     /* rows to write: holding something now or in VRAM */
     wr_n = 0;
+    {                                   /* (rows off the window: cleared) */
+        u32 wm[2] = { 0, 0 }, v;
+        u8 half, pr;
+        for (k = 0; k < WROWS; k++) {
+            pr = (top + k) & 63;
+            wm[pr >> 5] |= 1UL << (pr & 31);
+        }
+        for (half = 0; half < 2; half++) {
+            v = vram_nz[half] & ~wm[half];
+            vram_nz[half] &= wm[half];
+            for (pr = half << 5; v; v >>= 1, pr++)
+                if (v & 1) {
+                    wr_row[wr_n] = pr; wr_win[wr_n] = 0xFF; wr_n++;
+                }
+        }
+    }
     for (k = 0; k < WROWS; k++) {
         u8 pr = (top + k) & 63, nz = win_nz >> k & 1;
         u32 bit = 1UL << (pr & 31), *v = &vram_nz[pr >> 5];
@@ -667,6 +778,7 @@ void plane_reset(void)
     wr_n = 0;
     shown = -1;
     st_img = -1; st_cols = 0;           /* (the cleared plane: nothing written) */
+    st_img2 = -1; split = 0; ay2 = -999;
     was_fx = 0;
     boss_seen = 0;
     text_on_plane = 0;
@@ -710,12 +822,25 @@ void plane_upload(void)
     for (i = 0; i < wr_n; i++)
         vdp_dma_vram(VRAM_PLANE_A + wr_row[i] * 64, wr_win[i] == 0xFF ? zero_row : win[wr_win[i]], 32);
     wr_n = 0;
+    act_hs = hs; act_vs = vs;
+    act_hs2 = hs2; act_vs2 = vs2; act_split = split;
+}
+
+/* every VBlank: plane A's scroll at the top of the frame shown, the H-int
+ * for its split (src/xsp_fast.s _hint) and the sprite doubler */
+void plane_vblank(void)
+{
     VDP_CTRL32 = VSRAM_W(0);
-    VDP_DATA = vs & 511;
+    VDP_DATA = act_vs & 511;
     if (!bg_on)                         /* (plane B shows plane A's table: on top of it) */
-        VDP_DATA = vs & 511;
+        VDP_DATA = act_vs & 511;
     VDP_CTRL32 = VRAM_W(VRAM_HSCROLL);
-    VDP_DATA = hs;
+    VDP_DATA = act_hs;
     if (!bg_on)
-        VDP_DATA = hs;
+        VDP_DATA = act_hs;
+    split_vs = act_vs2 & 511;
+    split_hs = act_hs2;
+    split_line = act_split;
+    vdp_set_reg(10, act_split ? 8 - 1 : 96 - 1);   /* (every 8 lines; DBL_A) */
+    vdp_set_reg(0, act_split || act_n ? 0x14 : 0x04);
 }

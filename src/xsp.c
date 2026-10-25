@@ -666,6 +666,7 @@ void xsp_flush(void)
 }
 
 void dma_rom(u16 vram, const u32 *src, u16 words);
+void xsp_lag(void);
 
 /* VBlank: new tiles, then the sprite table */
 void xsp_upload(void)
@@ -689,14 +690,20 @@ void xsp_upload(void)
             act_b[k] = dbl_b[k];
             act_a[k] = table[dbl_slot[k]];
         }
-        vdp_set_reg(0, act_n ? 0x14 : 0x04);    /* H-int on / off */
-    } else if (act_n) {                     /* (no new table: the bullets above back) */
-        u8 k;
-        for (k = 0; k < act_n; k++) {
-            const u16 *w = (const u16 *)&act_a[k];
-            VDP_CTRL32 = VRAM_W(VRAM_SPRITES + act_slot[k] * 8);
-            VDP_DATA = w[0]; VDP_DATA = w[1]; VDP_DATA = w[2]; VDP_DATA = w[3];
-        }
+        hint_n = act_n;
+    } else
+        xsp_lag();
+}
+
+/* VBlank without a new sprite table: the bullets above the doubler's line
+ * back into their slots (the H-int wrote the ones below over them) */
+void xsp_lag(void)
+{
+    u8 k;
+    for (k = 0; k < act_n; k++) {
+        const u16 *w = (const u16 *)&act_a[k];
+        VDP_CTRL32 = VRAM_W(VRAM_SPRITES + act_slot[k] * 8);
+        VDP_DATA = w[0]; VDP_DATA = w[1]; VDP_DATA = w[2]; VDP_DATA = w[3];
     }
     hint_n = act_n;
 }

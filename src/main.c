@@ -36,6 +36,8 @@ static void hud_build(void)
  * complete frames (frame_ready), so a slow frame simply shows the previous
  * one again, and music / sound effects keep their own 60 Hz pace. */
 volatile u8 frame_ready;
+void xsp_lag(void);
+void plane_vblank(void);
 static u8 vbl_busy;
 
 #ifdef FRAME_PROBE
@@ -68,7 +70,12 @@ void vblank_work(void)
             text_dirty = 0;
         }
         frame_ready = 0;
-    }
+    } else
+        xsp_lag();
+    plane_vblank();                     /* plane A scroll, the H-int for the frame shown */
+    /* the VDP work is done: the H-int may come in during the rest (the
+     * sound, which can run into the display) */
+    __asm__ volatile("move.w #0x2500, %sr");
     input_poll();
 #ifdef FRAME_PROBE
     vp[1] = stamp();

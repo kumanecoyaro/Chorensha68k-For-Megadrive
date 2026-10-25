@@ -46,6 +46,7 @@
     .set    BULLET_PR, 0x3C                 | the enemy bullets: the sprite doubler's
     .set    DBL_MAX, 24                     | (at most this many bullets in the lower part
     .set    DBL_A, 96                       | of the screen reuse the slots of bullets above
+    .set    VRAM_HSCROLL, 0xDC00
     .set    DBL_B, 112                      | line DBL_A: src/xsp.c xsp_upload, the H-int)
     .set    DEBRIS_LO, 0x0B4                | debris.sp (particles): not drawn
     .set    DEBRIS_HI, 0x104
@@ -864,17 +865,39 @@ pair_put:
     movem.l (%sp)+, %d2-%d7/%a2-%a6
     rts
 
-| Level 4 (H-int at line DBL_A, src/vdp.c register 10): the sprite doubler.
-| The bullets above line DBL_A have been shown: their slots in the sprite
-| table take the bullets below DBL_B (xsp_upload sets act_*; hint_n is the
-| count still to write this frame: the second H-int, line 2 x DBL_A, has
-| nothing to do).  VRAM writes in the active display: 2 entries a line.
+| Level 4 H-int (src/vdp.c register 10: after line DBL_A - 1, or every 8
+| lines while plane A shows two images, src/plane.c).  The line from the
+| V counter (rounded to the 8-line boundary: a late H-int, held off while
+| the VBlank handler masks it, does its work late rather than not at all):
+| * split_line (0: none): plane A's scroll from that line on is split_vs /
+|   split_hs: the second image (the second of two battleships)
+| * DBL_A: the sprite doubler.  The bullets above line DBL_A have been
+|   shown: their slots in the sprite table take the bullets below DBL_B
+|   (xsp_upload sets act_*; hint_n is the count still to write this frame).
+|   VRAM writes in the active display: 2 entries a line.
     .globl  _hint
 _hint:
-    tst.w   hint_n
-    bne.s   1f
-    rte
-1:  movem.l %d0-%d1/%a0-%a2, -(%sp)
+    move.l  %d0, -(%sp)
+    moveq   #0, %d0
+    move.b  0xC00008, %d0               | V counter
+    cmp.b   #0xE0, %d0                  | (in the VBlank: a stale H-int, H-int
+    bcc     9f                          | just turned on)
+    addq.w  #4, %d0
+    and.w   #0xF8, %d0                  | the boundary just reached
+    tst.w   split_line
+    beq.s   3f
+    cmp.w   split_line, %d0
+    bcs.s   3f
+    clr.w   split_line
+    move.l  #0x40000010, 0xC00004       | VSRAM 0: plane A
+    move.w  split_vs, 0xC00000
+    move.l  #0x40000000 + ((VRAM_HSCROLL & 0x3FFF) << 16) + (VRAM_HSCROLL >> 14), 0xC00004
+    move.w  split_hs, 0xC00000
+3:  tst.w   hint_n
+    beq.s   9f
+    cmp.w   #DBL_A, %d0
+    bcs.s   9f
+    movem.l %d1/%a0-%a2, -(%sp)
     move.w  hint_n, %d0
     clr.w   hint_n
     subq.w  #1, %d0
@@ -891,7 +914,8 @@ _hint:
     move.l  (%a2)+, -4(%a0)
     move.l  (%a2)+, -4(%a0)
     dbra    %d0, 2b
-    movem.l (%sp)+, %d0-%d1/%a0-%a2
+    movem.l (%sp)+, %d1/%a0-%a2
+9:  move.l  (%sp)+, %d0
     rte
 
 | xsp_route(on) (src/xsp.c xsp_pairs): laser pairs (h_xsp_set_boss) or not
@@ -932,7 +956,10 @@ dbl_rn:      .word 0                    | slots of bullets above DBL_A (and empt
 dbl_b:       .space DBL_MAX * 8
 dbl_slot:    .space DBL_MAX
     .balign 2
-    .globl  act_n, hint_n, act_slot, act_b, act_a
+    .globl  act_n, hint_n, act_slot, act_b, act_a, split_line, split_vs, split_hs
+split_line:  .word 0                    | plane A split for the frame shown (_hint):
+split_vs:    .word 0                    | from this line on (0: none) this scroll
+split_hs:    .word 0
 act_n:       .word 0                    | the doubler for the frame shown (xsp_upload):
 hint_n:      .word 0                    | entries, still to write (_hint),
 act_b:       .space DBL_MAX * 8         | the bullets below, the ones above (VBlank
