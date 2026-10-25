@@ -37,6 +37,11 @@
     .set    LASER_HI, 0x5F                  | paired into 32x32 sprites
     .set    PSHOT_PR, 0x3A                  | the player's shots: drawn before the enemy
     .set    PSHOT_TO, 0x3D                  | bullets ($3C) when sprites run short
+    .set    SMOKE_PR, 0x38                  | missile smoke (PCGs $30-$37 at $38 / $3B): behind
+    .set    SMOKE_PR2, 0x3B
+    .set    SMOKE_LO, 0x30                  | the enemies ($34), dropped before them
+    .set    SMOKE_HI, 0x37
+    .set    SMOKE_TO, 0x32
     .set    BULLET_PR, 0x3C                 | the enemy bullets: the sprite doubler's
     .set    DBL_MAX, 24                     | (at most this many bullets in the lower part
     .set    DBL_A, 96                       | of the screen reuse the slots of bullets above
@@ -119,9 +124,8 @@ h_xsp_set_main:
     move.w  %d3, (%a0)
     moveq   #63, %d0
     and.w   %d3, %d0                    | priority list
-    cmp.w   #PSHOT_PR, %d0
-    bne.s   3f
-    moveq   #PSHOT_TO, %d0
+    move.b  pr_map(%pc,%d0.w), %d0      | (remapped: the player's shots, the smoke)
+    bmi.s   5f
 3:  lea     call_next, %a0              | (bhead = call_next - 128)
     move.b  -128(%a0,%d0.w), 0(%a0,%d4.w)
     move.b  %d4, -128(%a0,%d0.w)
@@ -137,6 +141,24 @@ h_xsp_set_main:
     rts
 9:  moveq   #0, %d0
     rts
+5:  and.w   #63, %d0                    | the smoke's priorities: smoke PCGs behind
+    move.w  %d2, %a0                    | the enemies
+    sub.w   #SMOKE_LO, %a0
+    cmp.w   #SMOKE_HI - SMOKE_LO, %a0
+    bhi.s   3b
+    moveq   #SMOKE_TO, %d0
+    bra.s   3b
+| priority -> list: the player's shots before the enemy bullets, $80 | priority:
+| look at the PCG (missile smoke)
+pr_map:
+    .irp    p, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
+    .byte   \p
+    .endr
+    .irp    p, 32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55
+    .byte   \p
+    .endr
+    .byte   0x80 | SMOKE_PR, 57, PSHOT_TO, 0x80 | SMOKE_PR2, 60, 61, 62, 63
+    .balign 2
 
 | A laser segment (rows of bullets change their spacing every frame: no
 | reuse) next to the same segment (same attributes) just recorded at this

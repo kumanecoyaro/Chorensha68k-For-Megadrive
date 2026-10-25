@@ -49,6 +49,8 @@ _Static_assert(ENEMY_BASE + PLANE_MAX_TILES <= VRAM_PLANE_A / 32, "plane A enemy
 #define IMG_O1A1   27                   /* the pods fully out (palette 6) */
 #define REF_WING   0xB44                /* stage 4 battleship type $20A (obj20A): a wing ($B45 damaged) */
 #define IMG_WING   28                   /* a wing (the right one: mirrored) */
+#define REF_O20E   0xB46                /* stage 4 large ship type $20E (obj20E): frames $B46..$B4D */
+#define IMG_O20E   29                   /* its frames (palette 9) */
 #define LOAD_CHUNK 64                   /* tiles per VBlank */
 #define WROWS      29                   /* plane rows on screen (224 lines + fine scroll) */
 
@@ -220,6 +222,9 @@ static void drop_image_calls(s8 img, Call *c)
                 if (pal_of(&calls[a[k]]) == p)
                     calls[a[k]].id = EMPTY_REF;
     } else if (img == IMG_O1F0) {
+        if (pal_of(c) == 9)
+            c->id = EMPTY_REF;
+    } else if ((u8)(img - IMG_O20E) < 8) {
         if (pal_of(c) == 9)
             c->id = EMPTY_REF;
     } else if (img == IMG_WING) {
@@ -502,6 +507,8 @@ void plane_frame(void)
                 im = o200_image(c, i);
             else if (id == REF_WING && pal_of(c) == 6)
                 im = IMG_WING;
+            else if ((u16)(id - REF_O20E) <= 7 && pal_of(c) == 9)
+                im = IMG_O20E + (id - REF_O20E);
             else if (id == REF_O1A1 && i >= 2 && pal_of(c) == 6 && c[-2].id == REF_O1A1 + 1
                      && c[-1].id == REF_O1A1 + 1 && (c[-1].info & 0x4000)
                      && c[-2].x == c->x - 28 * 64 && c[-1].x == c->x + 28 * 64

@@ -83,6 +83,9 @@ PLANE_GROUPS = [
         # right one (mirrored) is the same image written mirrored (src/plane.c mirror)
         [('obj20A', 1, 0, 6)],
     ],
+    [   # stage 4 large ship type $20E (obj20E, 96 x 192 px, palette 9): its 8 frames $B46..$B4D
+        [('obj20E', i, 0, 9)] for i in range(8)
+    ],
 ]
 BOMB_REFS = list(range(0xB6, 0xC0)) + list(range(0xAA9, 0xAAF))   # expl2 / expl3 / flare (src/plane.c is_effect)
 BOMB_PALS = (1, 3, 5, 12)  # X68000 palettes the bomb draws them with (info $x13F / $xC3F ...)
