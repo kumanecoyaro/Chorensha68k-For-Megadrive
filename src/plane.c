@@ -44,6 +44,7 @@ _Static_assert(ENEMY_BASE + PLANE_MAX_TILES <= VRAM_PLANE_A / 32, "plane A enemy
 #define IMG_O205   9                    /* core, then $B2B..$B30 */
 #define REF_O207   0xB34                /* stage 3 boss obj207: $B34..$B3B, second form $B3C / $B3D */
 #define IMG_O207   16                   /* $B34..$B3D */
+#define IMG_O1F0   26                   /* stage 3 type $1F0: obj200 body $B18, palette 9 */
 #define LOAD_CHUNK 64                   /* tiles per VBlank */
 #define WROWS      29                   /* plane rows on screen (224 lines + fine scroll) */
 
@@ -208,6 +209,9 @@ static void drop_image_calls(s8 img, Call *c)
             for (k = 0; k < 4; k++)
                 if (pal_of(&calls[a[k]]) == p)
                     calls[a[k]].id = EMPTY_REF;
+    } else if (img == IMG_O1F0) {
+        if (pal_of(c) == 9)
+            c->id = EMPTY_REF;
     } else if (img >= 2) {
         if (pal_of(c) == 7)
             c->id = EMPTY_REF;
@@ -402,6 +406,8 @@ static s8 o200_image(const Call *c, u16 i)
 {
     u8 im, p = pal_of(c);
     u16 a[4];
+    if (p == 9 || (p != 8 && p != 7 && shown == IMG_O1F0))
+        return IMG_O1F0;                /* (stage 3: the body alone; hit flash) */
     if (p == 8)
         im = IMG_O200;
     else if (p == 7)
@@ -446,7 +452,7 @@ void plane_frame(void)
             continue;
         }
         big |= id < REF_O21F;           /* (pl_refmap: the bosses and mid bosses below obj21f) */
-        if (img == 2 || img >= IMG_O205)
+        if (img == 2 || (img >= IMG_O205 && img < IMG_O1F0))     /* (a boss chosen) */
             continue;
         if (id == REF_BOSS || (u16)(id - REF_O205) <= 6 || (u16)(id - REF_O207) <= 9) {   /* a boss: first */
             best = i;

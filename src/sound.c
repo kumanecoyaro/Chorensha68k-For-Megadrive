@@ -37,7 +37,7 @@ u8 sfx_duck;                        /* a loud effect plays: the music steps back
 #define QMAX 1536
 u8 queue[QMAX];                 /* pending 3-byte writes: part offset, reg, value */
 u16 qlen;
-u16 ym_shadow[2][256];         /* last value written, $100 = unknown */
+u16 ym_shadow[2][0xA0];        /* last value written to $20..$BF, $100 = unknown */
 static u8 dac_on;
 static u8 music_pan6 = 0xC0;   /* FM6 pan wanted by the music ($B6, shared with the DAC) */
 
@@ -147,9 +147,9 @@ void ym_write(u8 part, u8 reg, u8 val)
         if (dac_on)
             return;
     }
-    if (reg != 0x28 && (reg & 0xF0) != 0xA0 && ym_shadow[part][reg] == val)
+    if (reg != 0x28 && (reg & 0xF0) != 0xA0 && ym_shadow[part][reg - 0x20] == val)
         return;
-    ym_shadow[part][reg] = val;
+    ym_shadow[part][reg - 0x20] = val;
     ym_put(part, reg, val);
 }
 
@@ -173,7 +173,7 @@ void sound_init(void)
         __asm__ volatile("nop");
     Z80_RESET = 0x100;
     z80_release_bus();
-    for (i = 0; i < 256; i++)
+    for (i = 0; i < 0xA0; i++)
         ym_shadow[0][i] = ym_shadow[1][i] = 0x100;
     qlen = 0;
     dac_on = 0;
@@ -224,7 +224,7 @@ void sound_update(void)
     if (play_frames && --play_frames == 0) {
         ym_put(0, 0x2B, 0x00);      /* effect over: FM6 back to the music */
         ym_put(1, 0xB6, music_pan6);
-        ym_shadow[1][0xB6] = music_pan6;
+        ym_shadow[1][0xB6 - 0x20] = music_pan6;
         dac_on = 0;
         sfx_duck = 0;
     }
@@ -242,7 +242,7 @@ void sound_update(void)
     if (e) {
         ym_put(0, 0x2B, 0x80);      /* DAC on, centred */
         ym_put(1, 0xB6, 0xC0);
-        ym_shadow[1][0xB6] = 0xC0;
+        ym_shadow[1][0xB6 - 0x20] = 0xC0;
         dac_on = 1;
     }
 

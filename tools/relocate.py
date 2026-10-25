@@ -36,7 +36,7 @@ RAM_MAP = [
     (0x49fb4, 0x4d39e + POOL_OBJS * 0x80, 'globals, shots, object pool'),
     (0x5931e, 0x5939e, 'object list tail / stage / player state'),
     (0x8421a, 0x8424a, 'frame skip state'),
-    (0x90252, 0x92000, 'BG state, player shot state, misc'),
+    (0x90252, 0x921c4, 'BG state, player shot state, misc, the floor enemy tables (fn_15ee8: to $921c4)'),
     (0x82004, 0x8201a, 'score / hi-score digit cache (fn_022b6 / fn_02336)'),
     (0x46860, 0x46868, 'class $40 update/init (patched per stage by fn_044a2)'),
     (0x4898c, 0x48994, 'palette animation state (fn_05a3a)'),

@@ -94,7 +94,7 @@ void psg_write(u8 v);
 static const u8 ch_part[6] = { 0, 0, 0, 1, 1, 1 };
 static const u8 ch_off[6] = { 0, 1, 2, 0, 1, 2 };
 
-extern u16 ym_shadow[2][256];
+extern u16 ym_shadow[2][0xA0];       /* (src/sound.c: registers $20..$BF) */
 extern u8 queue[];
 extern u16 qlen;
 u16 ym_flush(void);
@@ -124,9 +124,9 @@ static inline void fm_reg(u8 c, u8 reg, u8 val)
         ym_write(p, r, val);            /* FM6 pan (shared with the DAC) */
         return;
     }
-    if (ym_shadow[p][r] == val)
+    if (ym_shadow[p][r - 0x20] == val)
         return;
-    ym_shadow[p][r] = val;
+    ym_shadow[p][r - 0x20] = val;
     ym_put(p, r, val);
 }
 

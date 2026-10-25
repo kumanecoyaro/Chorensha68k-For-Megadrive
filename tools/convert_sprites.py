@@ -72,6 +72,9 @@ PLANE_GROUPS = [
     [   # its second form $B3C, $B3D
         [('obj207', 8, 0, 7)], [('obj207', 9, 0, 7)],
     ],
+    [   # stage 3 large enemy type $1F0 (obj200 body $B18 alone, palette 9)
+        [('obj200', 0, 0, 9)],
+    ],
 ]
 BOMB_REFS = list(range(0xB6, 0xC0)) + list(range(0xAA9, 0xAAF))   # expl2 / expl3 / flare (src/plane.c is_effect)
 BOMB_PALS = (1, 3, 5, 12)  # X68000 palettes the bomb draws them with (info $x13F / $xC3F ...)

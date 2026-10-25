@@ -332,9 +332,17 @@ long x_game_over(long score, long stage)
     return r;
 }
 
+/* fn_05224: the original's start-up (files into memory, palettes, the
+ * hooks of the X68000 libraries); here only the tables it computes:
+ * fn_05170($10), the speed $10 direction table, and fn_15ee8, the
+ * row tables of the stage 3 floor enemies (class $1A0 / $1A1 obj1a0,
+ * B_904ec..: without them the parts never come into range and stay
+ * invisible) */
 long x_pal_upload(void)
 {
     pal_from_orig();
+    ocall(OFN(0x05170), 0x10, 0, 0, 0);
+    ocall(OFN(0x15ee8), 0, 0, 0, 0);
     return 0;
 }
 

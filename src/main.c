@@ -4,8 +4,8 @@
 #include "orig.h"
 #include "spr.h"
 
-/* the original's RAM must end below the port's (src/md.ld: $FF9C00) */
-_Static_assert(ORIG_RAM + ORIG_RAM_SIZE <= 0xFF9C00, "original RAM overlaps the port's");
+/* the original's RAM must end below the port's (src/md.ld: $FF9DC0) */
+_Static_assert(ORIG_RAM + ORIG_RAM_SIZE <= 0xFF9DC0, "original RAM overlaps the port's");
 
 long ocall(void *fn, long a1, long a2, long a3, long a4);
 void text_map_set(u8 kind);
