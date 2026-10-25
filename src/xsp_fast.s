@@ -23,6 +23,7 @@
     .set    PLAYER_HI, 0xAD5
     .set    PLAYER_ROOM, 4                  | sprites kept free for the player after $3F
     .set    ENEMY_PR, 0x34                  | the enemies
+    .set    BEHIND_PR, 0x33                 | behind a high priority plane A boss (plane_behind)
     .set    VLASER_A, 0x50                  | vertical laser segments (thick, thin): pairs
     .set    VLASER_B, 0x59                  | one above the other become one ref
     .set    NEEDLE_PCG, 0x86                | (tools/convert_sprites.py NEEDLE_PCG)
@@ -493,7 +494,20 @@ xsp_build:
     subq.w  #1, %d0
     bra.s   41b
 42: move.w  %d0, (%sp)
-    move.w  #MAX_HW, hw_limit
+    tst.b   plane_behind                | the stage 5 boss on plane A (src/plane.c): the
+    beq.s   43f                         | sprites of $33 (its arms, hexagons) low priority,
+    lea     pal_attr, %a1               | behind its high priority tiles
+    moveq   #15, %d1
+    cmp.w   #BEHIND_PR, %d0
+    bne.s   45f
+44: bclr    #7, (%a1)
+    addq.l  #2, %a1
+    dbra    %d1, 44b
+    bra.s   43f
+45: bset    #7, (%a1)
+    addq.l  #2, %a1
+    dbra    %d1, 45b
+43: move.w  #MAX_HW, hw_limit
     move.w  #0x7FFF, fx_cap
     cmp.w   #0x3F, %d0                  | the front ($3F: the bomb ...) leaves room
     bne.s   3f                          | for the player ship ($3E, 2 pieces)
@@ -958,7 +972,14 @@ xsp_build:
 81: subq.w  #1, (%sp)
     bra     1b
 90: addq.l  #2, %sp
-    tst.w   %d7
+    tst.b   plane_behind
+    beq.s   92f
+    lea     pal_attr, %a1               | (high priority again)
+    moveq   #15, %d1
+93: bset    #7, (%a1)
+    addq.l  #2, %a1
+    dbra    %d1, 93b
+92: tst.w   %d7
     beq.s   91f
     clr.b   -5(%a0)                     | end of the link chain
 91: add.l   %d7, stat_out

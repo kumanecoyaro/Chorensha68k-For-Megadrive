@@ -125,6 +125,15 @@ static u8 is_effect(const Call *c)
     return id >= 0xB6 && id <= 0xBF && (c->info & 63) == 0x3F;
 }
 
+/* the stage 5 boss's body: high priority tiles, and its arms and the
+ * hexagons it sends out ($33, behind the body as on the X68000) low
+ * priority sprites (src/xsp_fast.s xsp_build: plane_behind) */
+u8 plane_behind;
+static u16 img_prio(s8 img)
+{
+    return (u8)(img - IMG_O216) < 10 ? 0x8000 : 0;
+}
+
 /* one cell at absolute plane cell (c, r) relative to window top */
 static void put(s16 c, s16 r, s16 top, u16 w)
 {
@@ -139,7 +148,7 @@ static void put_image(s8 img, s16 top)
 {
     const PlaneImg *im = &plane_img[img];
     const u16 *m = plane_map + im->map;
-    u16 attr = ((u16)im->pal << 13) + ENEMY_BASE - 1;
+    u16 attr = (((u16)im->pal << 13) | img_prio(img)) + ENEMY_BASE - 1;
     u8 r, c;
     for (r = 0; r < im->h; r++)
         for (c = 0; c < im->w; c++, m++)
@@ -309,7 +318,7 @@ static u8 build_rows(s8 img, u32 cols, u8 mir, u8 k)
 {
     const PlaneImg *im = &plane_img[img];
     const u16 *m = plane_map + im->map;
-    u16 attr = ((u16)im->pal << 13) + ENEMY_BASE - 1;
+    u16 attr = (((u16)im->pal << 13) | img_prio(img)) + ENEMY_BASE - 1;
     u8 r, c, lo = cols >> 16, hi = (u8)cols - 1;
     for (r = 0; r < im->h; r++, m += im->w) {
         u16 *d = win[k + r];
@@ -712,6 +721,7 @@ void plane_frame(void)
         bship = -1;
     shown = img;
     shown_ship = bship;
+    plane_behind = img_prio(img) != 0;
     split = 0;
     if (bship >= 0 && !fx && !was_fx && bg_on) {
         /* a second ship above or below the first one, with a gap holding an
