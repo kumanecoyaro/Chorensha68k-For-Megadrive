@@ -720,12 +720,14 @@ void xsp_flush(void)
         if (dbl_n > dbl_rn) {
             /* more bullets below than bullet slots above: any entry done by
              * line DBL_A (bottom above it) takes one */
-            u16 j;
-            for (k = 0, j = 0; j < n && k < DBL_MAX; j++) {
-                s16 y0 = table[j].y - 128;
-                if (y0 + (s16)((((table[j].size >> 8) & 3) + 1) * 8) <= DBL_A)
+            const HwSpr *t = table;
+            u8 j;
+            for (k = 0, j = 0; j < n; j++, t++)  /* (bottom: y + 8 * (cells - 1) + 8 - 128) */
+                if (t->y + (s16)((t->size >> 5) & 0x18) <= DBL_A + 128 - 8) {
                     dbl_slot[k++] = j;
-            }
+                    if (k == DBL_MAX)
+                        break;
+                }
             if (k > dbl_rn)
                 dbl_rn = k;
         }

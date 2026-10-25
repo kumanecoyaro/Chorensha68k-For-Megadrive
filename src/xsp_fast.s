@@ -27,6 +27,7 @@
     .set    VLASER_A, 0x50                  | vertical laser segments (thick, thin): pairs
     .set    VLASER_B, 0x59                  | one above the other become one ref
     .set    NEEDLE_PCG, 0x86                | (tools/convert_sprites.py NEEDLE_PCG)
+    .set    TURRET_ROOM, 24                 | and the stage 5 battleship's turrets
     .set    ENEMY_ROOM, 16                  | sprites the enemy bullets leave them at most
     .set    EFFECT_LO, 0x0B5                | expl2 .. expl4
     .set    EFFECT_HI, 0x210
@@ -173,19 +174,35 @@ xsp_set_rec:
 9:  moveq   #0, %d0
     rts
 5:  and.w   #63, %d0                    | the smoke's priorities: smoke PCGs behind
-    move.w  %d2, %a0                    | the enemies
+    cmp.b   #EFFECT_PR, %d0             | the enemies
+    beq.s   6f
+    move.w  %d2, %a0
     sub.w   #SMOKE_LO, %a0
     cmp.w   #SMOKE_HI - SMOKE_LO, %a0
     bhi.s   3b
     moveq   #SMOKE_TO, %d0
     bra.s   3b
+6:  tst.b   plane_turrets               | the stage 5 battleship on plane A (last
+    beq.s   3b                          | frame): its turrets (palette 6) of the
+    move.w  %d3, %d0                    | effect level to $33 with the others,
+    and.w   #0x0F00, %d0                | which the enemy bullets leave sprites
+    cmp.w   #0x0600, %d0                | for (enemy_room)
+    beq.s   4f
+    moveq   #EFFECT_PR, %d0
+    bra.s   3b
+4:  moveq   #BEHIND_PR, %d0
+    bra.s   3b
 | priority -> list: the player's shots before the enemy bullets, $80 | priority:
-| look at the PCG (missile smoke)
+| look at the PCG (missile smoke, turrets)
 pr_map:
     .irp    p, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
     .byte   \p
     .endr
-    .irp    p, 32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55
+    .irp    p, 32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48
+    .byte   \p
+    .endr
+    .byte   0x80 + EFFECT_PR                | ($31: the stage 5 battleship's turrets, below)
+    .irp    p, 50,51,52,53,54,55
     .byte   \p
     .endr
     .byte   0x80 + SMOKE_PR, 57, PSHOT_TO, 0x80 + SMOKE_PR2, 60, 61, 62, 63
@@ -992,11 +1009,28 @@ xsp_build:
 | enemies' beams took every sprite and all of them vanished); the doubler
 | still brings back bullets below its line.  (d1-d4, a1, a3, a6)
 enemy_room:
-    lea     bhead, %a1
+    movem.l %d5/%a5, -(%sp)
+    moveq   #0, %d1
+    moveq   #ENEMY_ROOM, %d5
+    lea     bhead + ENEMY_PR, %a5
+    bsr.s   10f
+    move.w  %d2, %d1
+    tst.b   plane_turrets               | the stage 5 battleship on plane A: its
+    beq.s   4f                          | turrets ($33) too, TURRET_ROOM at most
+    moveq   #TURRET_ROOM, %d5
+    lea     bhead + BEHIND_PR, %a5
+    bsr.s   10f
+4:  neg.w   %d1
+    add.w   #MAX_HW, %d1
+    move.w  %d1, hw_limit
+    movem.l (%sp)+, %d5/%a5
+    rts
+| d1 += the sprites of list (a5), d5 at most (d2 = them)
+10: move.w  %d1, -(%sp)
     lea     ref_start, %a6
     moveq   #0, %d2
     moveq   #0, %d1
-    move.b  ENEMY_PR(%a1), %d1
+    move.b  (%a5), %d1
     lea     calls, %a1
     lea     call_next, %a3
 1:  cmp.b   #0xFF, %d1
@@ -1010,16 +1044,15 @@ enemy_room:
     sub.w   0(%a6,%d4.w), %d2
     subq.w  #1, %d2
 2:  addq.w  #1, %d2
-    cmp.w   #ENEMY_ROOM, %d2
+    cmp.w   %d5, %d2
     bcc.s   3f
     move.b  0(%a3,%d1.w), %d1           | next
     bra.s   1b
-3:  cmp.w   #ENEMY_ROOM, %d2
+3:  cmp.w   %d5, %d2
     bls.s   4f
-    moveq   #ENEMY_ROOM, %d2
-4:  move.w  #MAX_HW, %d1
-    sub.w   %d2, %d1
-    move.w  %d1, hw_limit
+    move.w  %d5, %d2
+4:  move.w  (%sp)+, %d1
+    add.w   %d2, %d1
     rts
 
 | key d4 not at its home slot: probe on (d5 = home offset); d4 = tile, Z if none

@@ -138,6 +138,9 @@ static u8 is_effect(const Call *c)
  * hexagons it sends out ($33, behind the body as on the X68000) low
  * priority sprites (src/xsp_fast.s xsp_build: plane_behind) */
 u8 plane_behind;
+/* the stage 5 battleship is on plane A: its turrets get sprites kept for them
+ * (src/xsp.c xsp_flush, src/xsp_fast.s enemy_room) */
+u8 plane_turrets;
 static u16 img_prio(s8 img)
 {
     return (u8)(img - IMG_O216) < 10 ? 0x8000 : 0;
@@ -766,6 +769,7 @@ void plane_frame(void)
     shown = img;
     shown_ship = bship;
     plane_behind = img_prio(img) != 0;
+    plane_turrets = (u8)(img - IMG_O21A) < 2;
     split = 0;
     if (bship >= 0 && !fx && !was_fx && bg_on) {
         /* a second ship above or below the first one, with a gap holding an
