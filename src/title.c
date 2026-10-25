@@ -10,9 +10,10 @@
  *       CONTINUE
  *       CREDITS                     (the original credits screen)
  *
- * START with up held, the cursor on the difficulty: invincible (the
- * original's debug option B_4a104, "no death").  The cursor does not wrap,
- * so up there stays put.
+ * START with up held, the cursor on the difficulty or the stage: invincible
+ * (the original's debug option B_4a104, "no death"; START comes before the
+ * cursor moving up).  The cursor does not wrap, so up on the difficulty
+ * stays put.
  *
  * The difficulty is set with the original options: GAME LEVEL B_4a0f8
  * (0 normal, 1 impossible) and the enemy bullet speed TD_SPEED B_4a106
@@ -148,7 +149,7 @@ long x_title_menu(void)
             idle = 0;
             continue;
         }
-        if ((e & 0x20) && row == 0 && (pad_now & PAD_UP)) {
+        if ((e & 0x20) && row <= 1 && (pad_now & PAD_UP)) {
             e = 0x10;                   /* up + START: invincible */
             OW(0x4a104) = 1;
         } else if (e & 0x30)
