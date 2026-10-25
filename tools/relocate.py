@@ -133,14 +133,14 @@ def patches():
         # player Y limit: the X68000 screen is 256 lines, the Mega Drive shows 224
         (0x0604a, '3f00', '3700', 'player y limit (cmp.w #$3f00,d1)'),
         (0x06052, '3f00', '3700', 'player y limit (move.w #$3f00,B_4cca0)'),
-        # stages 1-3 are converted so far: after the stage 3 clear (state
-        # $210) back to stage 1 (addq.w #1,B_4a0ee -> subq.w #2; src/bg.c restarts the map)
         # missile smoke (class $121, fn_10972 / L109d0: 8 puff frames over $80 / rate
         # frames): the frames twice as fast, gone at $40: the trail half as long
         # (puffs as dense as before; sprites halved)
         (0x109e6, 'e840', 'e640', 'smoke: frame = age >> 3 (asr.w #4 -> #3)'),
         (0x10a14, '0080', '0040', 'smoke: gone at age $40 (cmp.w #$80)'),
-        (0x0872a, '5279', '5579', 'stage 3 -> stage 1 (addq.w #1,abs.l -> subq.w #2)'),
+        # stages 1-4 are converted so far: after the stage 4 clear (state
+        # $210) back to stage 1 (addq.w #1,B_4a0ee -> subq.w #3; src/bg.c restarts the map)
+        (0x0a4de, '5279', '5779', 'stage 4 -> stage 1 (addq.w #1,abs.l -> subq.w #3)'),
         # fn_056ae skips a chip equal to the one already in the page cell; with
         # both layers on one plane (src/bg.c) the far chip under it may differ
         (0x057f0, '6774', '4e71', 'BG: always draw the chip (beq.b L05866 -> nop)'),
