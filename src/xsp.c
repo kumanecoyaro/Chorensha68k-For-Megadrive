@@ -362,12 +362,30 @@ void xsp_call(s16 x, s16 y, u16 id, u16 info);
 void plane_frame(void);
 extern u16 pl_n;
 
+#ifdef FRAME_PROBE
+u16 fprobe[32][4];                          /* plane_frame / text_sprites / xsp_build */
+extern u8 probe_n;
+u16 stamp(void);
+#endif
 void xsp_flush(void)
 {
     u16 n;
+#ifdef FRAME_PROBE
+    u16 *fp = fprobe[probe_n & 31];
+    fp[0] = stamp();
+#endif
     plane_frame();                      /* (may drop the calls of a large enemy) */
+#ifdef FRAME_PROBE
+    fp[1] = stamp();
+#endif
     text_sprites();
+#ifdef FRAME_PROBE
+    fp[2] = stamp();
+#endif
     n = xsp_build(table);
+#ifdef FRAME_PROBE
+    fp[3] = stamp();
+#endif
     if (!n) {
         table[0].y = 0; table[0].size = 0; table[0].attr = 0; table[0].x = 1;
         n = 1;

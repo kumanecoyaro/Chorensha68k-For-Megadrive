@@ -430,12 +430,19 @@ void plane_frame(void)
             else if (id == REF_O200)
                 im = o200_image(c, i);
             if (im >= 0) {
-                /* of two: the one already shown (nearest), one whose tiles are in VRAM */
-                s16 d = (c->x >> 6) - ax, e = (c->y >> 6) - ay;
-                d = (d < 0 ? -d : d) + (e < 0 ? -e : e);
-                if (plane_img[im].group != loaded)
-                    d += 1000;
-                if (shown < 0 || d < bd) {
+                /* of several: one whose tiles are in VRAM (or coming in), then the
+                 * one nearest to the one shown: no switching back and forth
+                 * between two image groups (each switch reloads the tiles) */
+                u8 g = plane_img[im].group;
+                s16 d = 0;
+                if (shown >= 0) {
+                    s16 e = (c->y >> 6) - ay;
+                    d = (c->x >> 6) - ax;
+                    d = (d < 0 ? -d : d) + (e < 0 ? -e : e);
+                }
+                if (g != loaded)
+                    d += g == loading ? 1000 : 2000;
+                if (d < bd) {
                     bd = d; best = i; img = im;
                 }
             }
@@ -447,8 +454,9 @@ void plane_frame(void)
         u8 g = plane_img[img].group;
         if (loaded != g) {
             if (loading != g) {
-                loading = g;
+                loaded = 0xFF;              /* (its tiles are being overwritten) */
                 load_pos = 0;
+                loading = g;
             }
             img = -1;                   /* sprites until the tiles are in */
         }
