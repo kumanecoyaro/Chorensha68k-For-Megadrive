@@ -2,8 +2,8 @@
 
 X68000 用シューティング「超連射68k」(ver1.10) のメガドライブ移植プロジェクト。
 
-現在: **ステージ1〜2 を最初からボス撃破・ステージクリアまで通しでプレイ可能**
-（2 面クリア後はステージ1 に戻る。ステージ3 以降の BG は未変換）。
+現在: **ステージ1〜3 を最初からボス撃破・ステージクリアまで通しでプレイ可能**
+（3 面クリア後はステージ1 に戻る。ステージ4 以降の BG は未変換）。
 
 * 解析メモ: [docs/ANALYSIS.md](docs/ANALYSIS.md)
 * ビルド済み ROM: `out/chorensha68k_md.bin`（2.5 MB）
@@ -66,7 +66,10 @@ X68000 もメガドライブも CPU は 68000 なので、ゲームロジック�
 | A | ショット（原作通り押すたびに連射。連打してください） |
 | B | ボム |
 | C | オート連射（MD 版追加） |
-| START | ポーズ（タイトルでは A / B で決定） |
+| START | ポーズ（タイトルでは A / B / START で決定） |
+
+タイトルメニュー: 難易度（EASY / NORMAL / HARD、左右）、STAGE（開始面 1〜3、左右）、CONTINUE、CREDITS。
+難易度の行で **上を押しながら START** で無敵（原作のデバッグオプション「死なない」）。
 
 ## ビルド
 
@@ -91,14 +94,14 @@ make XDF=path/to/CH68_110_1.xdf
 | `tools/z80_pcm_driver.py` | Z80 ドライバ生成（DAC 再生 + YM2612 書き込みキュー） |
 | `tools/mdx.py`, `tools/convert_bgm.py` | MDX 解析 / チャンネル割り当て・音程表の生成 |
 | `tools/rom_budget.py` | ROM サイズ集計 |
-| `tools/build_variant.sh` | デバッグ用ビルド（`-DTEST_MUTEKI` 無敵, `-DFRAME_PROBE` 処理時間計測, `-DPLANE_ONLY` プレーンAだけ表示, `-DTEST_CRAB_HP1` 1 面の蟹が一撃で死ぬ（obj21f の確認用）, `-DTEST_STAGE=2` 2 面から開始, `-DTEST_KEYLOG` CPU 変換したスプライトのキーを記録, `-DTEST_BGLOG` 描いたチップを記録, `-DTEST_FAILLOG` スプライトのタイル読み込み失敗を記録, `-DZ80_PEEK` ほか） |
+| `tools/build_variant.sh` | デバッグ用ビルド（`-DTEST_MUTEKI` 無敵, `-DFRAME_PROBE` 処理時間計測, `-DPLANE_ONLY` プレーンAだけ表示, `-DTEST_CRAB_HP1` 1 面の蟹が一撃で死ぬ（obj21f の確認用）, `-DTEST_STAGE=2` タイトルの開始面の初期値, `-DTEST_KEYLOG` CPU 変換したスプライトのキーを記録, `-DTEST_BGLOG` 描いたチップを記録, `-DTEST_FAILLOG` スプライトのタイル読み込み失敗を記録, `-DZ80_PEEK` ほか） |
 | `tools/fixrom.py` | ROM ヘッダとチェックサムの設定 |
 | `tools/mdrun.py` | libretro コア（Genesis Plus GX）でのヘッドレス実行・スクリーンショット |
 | `tools/uctrace.py` | unicorn の 68000 で ROM を実行（ROM 書き込み検出・プロファイル・命令数計測） |
 
 ## 未対応 / 既知の問題
 
-* ステージ3 以降（BG のタイル・パレット未変換。現在は 2 面クリアで 1 面に戻る）
+* ステージ4 以降（BG のタイル・パレット未変換。現在は 3 面クリアで 1 面に戻る）
 * 設定画面、ランキングの保存（バックアップ RAM 無し）
 * パレットのフェード（BG パレットはステージごとに固定。次の面の BG への切り替えはフェードの途中で一度に、表示を 1 フレーム消して行う）
 * スプライト色は X68000 の 16 パレット → MD 2 パレットへの減色

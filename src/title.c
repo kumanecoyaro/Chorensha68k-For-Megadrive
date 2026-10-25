@@ -5,10 +5,14 @@
  * text row 20 down (cut by the Mega Drive's 224 lines); CONFIGURE is an
  * X68000 settings screen.  Here:
  *
- *       EASY  NORMAL  HARD          (left / right, A or B: start)
+ *       EASY  NORMAL  HARD          (left / right; A, B or START: start)
+ *       STAGE 1                     (left / right: the stage to start at)
  *       CONTINUE
  *       CREDITS                     (the original credits screen)
- *       exit                        (does nothing)
+ *
+ * START with up held, the cursor on the difficulty: invincible (the
+ * original's debug option B_4a104, "no death").  The cursor does not wrap,
+ * so up there stays put.
  *
  * The difficulty is set with the original options: GAME LEVEL B_4a0f8
  * (0 normal, 1 impossible) and the enemy bullet speed TD_SPEED B_4a106
@@ -18,6 +22,7 @@
  */
 #include "game.h"
 #include "orig.h"
+#include "vdp.h"
 
 long ocall(void *fn, long a1, long a2, long a3, long a4);
 long x_text_clear(void);
@@ -34,11 +39,19 @@ void text_map_set(u8 kind);
 #define ROW0   17                       /* first menu row (text rows of 8 lines) */
 #define CURSOR 5                        /* the original's cursor character */
 
-static const char *const items[4] = { 0, "CONTINUE", "CREDITS", "exit" };
+#define NROWS  4
+static const char *const items[NROWS] = { 0, 0, "CONTINUE", "CREDITS" };
 static const struct { u8 col; const char *s; u8 level, td_speed; } diff[3] = {
     { 7, "EASY", 0, 0x0C }, { 13, "NORMAL", 0, 0x10 }, { 21, "HARD", 1, 0x10 },
 };
 static u8 sel_diff = 1;
+#ifdef TEST_STAGE
+static u8 sel_stage = TEST_STAGE;
+#else
+static u8 sel_stage = 1;
+#endif
+#define NSTAGES 3                       /* converted stages (src/bg.c BG sets) */
+u8 start_stage;                         /* src/bg.c: taken at the game's first full redraw */
 
 static void puts_at(u8 x, u8 y, const char *s)
 {
@@ -53,7 +66,9 @@ static void draw_menu(void)
     ocall(OFN(0x022b6), 0, 0, 0, 0);    /* score line */
     for (i = 0; i < 3; i++)
         puts_at(diff[i].col, ROW0, diff[i].s);
-    for (i = 1; i < 4; i++)
+    puts_at(13, ROW0 + 2, "STAGE");
+    x_text_putc(19, ROW0 + 2, '0' + sel_stage);
+    for (i = 2; i < NROWS; i++)
         puts_at(13, ROW0 + 2 * i, items[i]);
 }
 
@@ -96,7 +111,7 @@ static void show_ranking(u8 *last)
 
 static u8 pad_edge(u8 *last)
 {
-    u8 now = (x_joybtn(1) ? 0x10 : 0), d = x_joydir(1), e;
+    u8 now = (x_joybtn(1) ? 0x10 : 0) | (pad_now & PAD_START ? 0x20 : 0), d = x_joydir(1), e;
     if (d == 8) now |= 1;               /* up */
     if (d == 2) now |= 2;               /* down */
     if (d == 4) now |= 4;               /* left */
@@ -118,7 +133,7 @@ long x_title_menu(void)
     ocall(OFN(0x051b8), 0, 0, 0, 0);    /* palettes */
     logo_slide();
     OL(0x4a0ea) = OL(0x4a0dc);          /* (as the original: the score shown) */
-    row = OW(0x82018) ? 1 : 0;          /* after a game: CONTINUE */
+    row = OW(0x82018) ? 2 : 0;          /* after a game: CONTINUE */
     draw_menu();
     draw_cursor(row, 1);
     for (;;) {
@@ -133,10 +148,21 @@ long x_title_menu(void)
             idle = 0;
             continue;
         }
-        if (e & 3) {
+        if ((e & 0x20) && row == 0 && (pad_now & PAD_UP)) {
+            e = 0x10;                   /* up + START: invincible */
+            OW(0x4a104) = 1;
+        } else if (e & 0x30)
+            OW(0x4a104) = 0;
+        if (e & 0x30) {
+            e = 0x10;
+        } else if (e & 3) {
+            u8 r = e & 1 ? (row ? row - 1 : 0) : (row < NROWS - 1 ? row + 1 : row);
             draw_cursor(row, 0);
-            row = (row + (e & 1 ? 3 : 1)) & 3;
+            row = r;
             draw_cursor(row, 1);
+        } else if ((e & 12) && row == 1) {
+            sel_stage = e & 4 ? (sel_stage > 1 ? sel_stage - 1 : NSTAGES) : (sel_stage < NSTAGES ? sel_stage + 1 : 1);
+            x_text_putc(19, ROW0 + 2, '0' + sel_stage);
         } else if ((e & 12) && row == 0) {
             draw_cursor(0, 0);
             if (e & 4)
@@ -144,17 +170,20 @@ long x_title_menu(void)
             else
                 sel_diff = sel_diff < 2 ? sel_diff + 1 : 0;
             draw_cursor(0, 1);
-        } else if (e & 0x10) {
-            if (row <= 1) {
+        }
+        if (e & 0x10) {
+            if (row <= 2) {
+                u8 cont = row == 2;
                 OW(0x4a0f8) = diff[sel_diff].level;
                 OW(0x4a106) = diff[sel_diff].td_speed;
                 OW(0x82018) = -1;
-                x_bgm_play(row ? 2 : 1);    /* (as the original) */
+                start_stage = cont ? 1 : sel_stage;
+                x_bgm_play(cont ? 2 : 1);   /* (as the original) */
                 x_text_clear();
                 x_xsp_out0();
-                return row;
+                return cont;
             }
-            if (row == 2) {             /* credits, then the menu again */
+            if (row == 3) {             /* credits, then the menu again */
                 ocall(OFN(0x0294a), 0, 0, 0, 0);
                 draw_menu();                /* (the logo sprites stay) */
                 draw_cursor(row, 1);

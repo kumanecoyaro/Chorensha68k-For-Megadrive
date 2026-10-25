@@ -322,15 +322,15 @@ static void merge_all(void)
  * with the current stage's set, then merge every near cell again over the
  * far layer now in place */
 long orig_05574(void);
+extern u8 start_stage;                      /* (src/title.c) */
 long x_bg_full(void)
 {
     u8 st;
-#ifdef TEST_STAGE
-    if ((OW(0x4a0ee) & 7) == 1) {           /* (debug) the game starts at stage TEST_STAGE */
-        OW(0x4a0ee) += TEST_STAGE - 1;
-        ocall(OFN(0x05906), (TEST_STAGE - 1) * 8, 0x10, 0, 0);
+    if (start_stage > 1 && (OW(0x4a0ee) & 7) == 1) {  /* the title's stage select */
+        OW(0x4a0ee) += start_stage - 1;
+        ocall(OFN(0x05906), (start_stage - 1) * 8, 0x10, 0, 0);
     }
-#endif
+    start_stage = 0;
     st = cur_stage();
     if (st != bs_stage)
         set_select(st);
