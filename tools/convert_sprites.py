@@ -79,6 +79,11 @@ PLANE_GROUPS = [
         # mirrored) 28 px out, 12 px up, centre $B16, palette 6: the pods fully out
         [('obj1a0', 2, -28, 6, -12), ('obj1a0', 2, 28, 6, -12, 1), ('obj1a0', 1, 0, 6)],
     ],
+    [   # stage 4 battleship type $20A (obj20A): centre $B43, halves $B44 128 px either side
+        # (the right one mirrored), 24 px up, palette 6: 512 x 96 px (src/plane.c: wider
+        # than the plane, only the columns on screen are written)
+        [('obj20A', 0, 0, 6), ('obj20A', 1, -128, 6, -24), ('obj20A', 1, 128, 6, -24, 1)],
+    ],
 ]
 BOMB_REFS = list(range(0xB6, 0xC0)) + list(range(0xAA9, 0xAAF))   # expl2 / expl3 / flare (src/plane.c is_effect)
 BOMB_PALS = (1, 3, 5, 12)  # X68000 palettes the bomb draws them with (info $x13F / $xC3F ...)
@@ -137,6 +142,18 @@ class TileSet:
 
 def tile_bytes(px):
     return bytes((px[i] << 4) | px[i + 1] for i in range(0, 64, 2))
+
+def add_flipped(ts, px):
+    """a plane image tile: one already in the set, flipped (name table flip
+    bits 11 / 12: mirrored images take half the tiles), else a new one;
+    -> plane map word (flips | tile + 1)"""
+    for flips in (0, 0x800, 0x1000, 0x1800):
+        q = [px[(7 - y if flips & 0x1000 else y) * 8 + (7 - x if flips & 0x800 else x)]
+             for y in range(8) for x in range(8)]
+        k = ts.index.get(tile_bytes(q))
+        if k is not None:
+            return flips | (k + 1)
+    return ts.add(tile_bytes(px)) + 1
 
 def main(xsp, out):
     rd = lambda f: open(os.path.join(xsp, f), 'rb').read()
@@ -312,7 +329,7 @@ def main(xsp, out):
             for ty in range(h):
                 for tx in range(w):
                     t = [pix.get((ox + tx * 8 + x, oy + ty * 8 + y), 0) for y in range(8) for x in range(8)]
-                    pmaps.append(gtiles.add(tile_bytes(t)) + 1 if any(t) else 0)
+                    pmaps.append(add_flipped(gtiles, t) if any(t) else 0)
             pimg.append((ox, oy, w, h, moff, 2 + mdpal, len(pgroups)))
         pgroups.append((len(ptiles), len(gtiles.tiles), first, len(pimg) - first))
         ptiles += gtiles.tiles

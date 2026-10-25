@@ -141,6 +141,7 @@ long x_vsync(long n)
     }
 #endif
     bg_stage_check();
+    bg_retry();
     waited = frame_ready;
     PROBE(0);
     return waited;

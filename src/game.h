@@ -39,6 +39,7 @@ void xsp_upload(void);          /* VBlank: DMA tiles + sprite table */
 void bg_scroll(s16 x0, s16 x1, s16 y0, s16 y1);
 void bg_upload(void);
 void bg_stage_check(void);
+void bg_retry(void);
 
 /* ---- sound.c / music.c */
 void sound_init(void);

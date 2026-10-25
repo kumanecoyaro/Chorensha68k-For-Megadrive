@@ -139,6 +139,11 @@ static void sof_del(u16 c)
     sof_key[h] = 0;
 }
 
+/* cells merged without some composite (the pool full: the far tile shown
+ * there instead), a bit per column; merged again when a slot comes free
+ * (bg_retry) */
+static u8 retry_mask[16], comp_freed;
+
 static void comp_release(u8 near, u8 far)
 {
     u8 i, m, fx = bs->far_ix[far];
@@ -149,8 +154,8 @@ static void comp_release(u8 near, u8 far)
         m = bs->near_mix[near * 16 + i];
         if (m && (c = bs->comp[(m - 1) * bs->nfar + fx]) != 0) {
             u8 s = slot_of((c & 0x1FFF) - 1);
-            if (s && slot_ref[s - 1])
-                slot_ref[s - 1]--;
+            if (s && slot_ref[s - 1] && !--slot_ref[s - 1])
+                comp_freed = 1;
         }
     }
 }
@@ -223,6 +228,7 @@ static void merge_cell(u8 p, u8 c)
     u8 n = near_sh[p][c], f = far_sh[row_far[p]][c], fx = bs->far_ix[f], i, m;
     const u16 *nw = bs->chip_near + n * 16, *fw = bs->chip_far + f * 16;
     u16 *w;
+    u8 miss = 0;
     while (chipq_n >= CHIPQ)                /* (full redraws: let VBlank drain it) */
         ;
     cell_far[p][c] = f;
@@ -232,11 +238,21 @@ static void merge_cell(u8 p, u8 c)
         if (m) {
             u16 cw = fx == 0xFF ? 0 : bs->comp[(m - 1) * bs->nfar + fx], t;
             w[i] = nw[i];
-            if (cw && (t = comp_get(cw & 0x1FFF)) != 0)
-                w[i] = (cw & 0xE000) | t;
+            if (cw) {
+                if ((t = comp_get(cw & 0x1FFF)) != 0)
+                    w[i] = (cw & 0xE000) | t;
+                else {
+                    w[i] = fw[i];           /* (pool full: the far tile, not a hole) */
+                    miss = 1;
+                }
+            }
         } else
             w[i] = nw[i] ? nw[i] : fw[i];
     }
+    if (miss)
+        retry_mask[p] |= 1 << c;
+    else
+        retry_mask[p] &= ~(1 << c);
     irq_off();
     chipq[chipq_n].vram = VRAM_PLANE_B + (p << 8) + (c << 3);
     chipq_n++;
@@ -300,6 +316,8 @@ static void set_select(u8 st)
         sof_key[k] = 0;
     for (k = 0; k < 16 * 8; k++)
         (&cell_far[0][0])[k] = 0xFF;        /* (nothing to release) */
+    for (k = 0; k < 16; k++)
+        retry_mask[k] = 0;
     xsp_cache_layout(1 + bs->ntiles);       /* the sprite cache follows the set's tiles */
 }
 
@@ -337,6 +355,26 @@ long x_bg_full(void)
     ocall(orig_05574, 0, 0, 0, 0);
     merge_all();
     return 0;
+}
+
+/* once a frame (x_vsync): a cell merged without some composite is merged
+ * again once a pool slot has come free (one cell a frame) */
+void bg_retry(void)
+{
+    static u8 rp;
+    u8 k, c;
+    if (!comp_freed)
+        return;
+    for (k = 0; k < 16; k++, rp = (rp + 1) & 15)
+        if (retry_mask[rp]) {
+            for (c = 0; !(retry_mask[rp] & (1 << c)); c++)
+                ;
+            comp_freed = 0;
+            comp_release(near_sh[rp][c], cell_far[rp][c]);
+            merge_cell(rp, c);
+            return;
+        }
+    comp_freed = 0;
 }
 
 /* once a frame (x_vsync): a new stage switches its set in while its palette

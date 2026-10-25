@@ -47,6 +47,8 @@ _Static_assert(ENEMY_BASE + PLANE_MAX_TILES <= VRAM_PLANE_A / 32, "plane A enemy
 #define IMG_O1F0   26                   /* stage 3 type $1F0: obj200 body $B18, palette 9 */
 #define REF_O1A1   0xB16                /* stage 3 type $1A1 (obj1a0): centre $B16 after its pods $B17 */
 #define IMG_O1A1   27                   /* the pods fully out (palette 6) */
+#define REF_O20A   0xB43                /* stage 4 battleship type $20A (obj20A): centre $B43, halves $B44 */
+#define IMG_O20A   28                   /* the whole ship (64 cells wide) */
 #define LOAD_CHUNK 64                   /* tiles per VBlank */
 #define WROWS      29                   /* plane rows on screen (224 lines + fine scroll) */
 
@@ -199,6 +201,32 @@ static u8 put_ref(const Call *cl, s16 top)
 /* the calls shown by the plane image are dropped (a flashing part stays a
  * sprite, over it) */
 static u8 o200_arms(const Call *c, u16 i, u16 *a);
+
+/* the battleship $B43 (call i): its halves ($B44, $B45 when damaged) 128 px
+ * either side, 24 px up, the right one mirrored, among the next calls (a
+ * gun turret comes in between); drop: the $B44 ones of palette 6 dropped
+ * (the plane image shows them; a damaged or flashing half stays a sprite,
+ * over it) */
+static u8 o20a_halves(u16 i, u8 drop)
+{
+    const Call *c = &calls[i];
+    u16 j, end = i + 8 < ncalls ? i + 8 : ncalls;
+    u8 found = 0;
+    for (j = i + 1; j < end; j++) {
+        Call *h = &calls[j];
+        u8 right;
+        if ((u16)(h->id - (REF_O20A + 1)) > 1 && h->id != EMPTY_REF)
+            continue;
+        right = (h->info & 0x4000) != 0;
+        if (h->x != c->x + (right ? 128 * 64 : -128 * 64) || h->y != c->y - 24 * 64)
+            continue;
+        found |= 1 << right;
+        if (drop && h->id == REF_O20A + 1 && pal_of(h) == 6)
+            h->id = EMPTY_REF;
+    }
+    return found == 3;
+}
+
 static void drop_image_calls(s8 img, Call *c)
 {
 
@@ -214,6 +242,10 @@ static void drop_image_calls(s8 img, Call *c)
     } else if (img == IMG_O1F0) {
         if (pal_of(c) == 9)
             c->id = EMPTY_REF;
+    } else if (img == IMG_O20A) {
+        if (pal_of(c) == 6)
+            c->id = EMPTY_REF;
+        o20a_halves(c - calls, 1);
     } else if (img == IMG_O1A1) {
         if (pal_of(c) == 6) c->id = EMPTY_REF;
         if (pal_of(c - 1) == 6) c[-1].id = EMPTY_REF;
@@ -228,7 +260,9 @@ static void drop_image_calls(s8 img, Call *c)
     }
 }
 
-/* image columns fully on screen (plane A is as wide as the screen) */
+/* the image columns fully on screen, lo << 16 | hi + 1 (0: none; at most 32
+ * of them: plane A is as wide as the screen, column c goes to plane column
+ * c & 31, also for an image wider than the plane) */
 static u32 visible_cols(const PlaneImg *im, s16 h)
 {
     s16 lo = (7 - h) >> 3, hi = (256 - 8 - h) >> 3;    /* h + 8c in 0..248 */
@@ -236,7 +270,7 @@ static u32 visible_cols(const PlaneImg *im, s16 h)
     if (hi > im->w - 1) hi = im->w - 1;
     if (lo > hi)
         return 0;
-    return (hi >= 31 ? 0xFFFFFFFFUL : (2UL << hi) - 1) & ~((1UL << lo) - 1);
+    return ((u32)lo << 16) | (hi + 1);
 }
 
 /* the window rows holding something cleared */
@@ -264,11 +298,13 @@ static void write_static(s8 img, u32 cols)
         const u16 *m = plane_map + im->map;
         u16 attr = ((u16)im->pal << 13) + ENEMY_BASE - 1;
         h = im->h;
-        for (r = 0; r < h; r++) {
+        u8 lo = cols >> 16, hi = (u8)cols - 1;
+        for (r = 0; r < h; r++, m += im->w) {
             u16 *d = win[r];
-            u32 cm = cols;
-            for (c = 0; c < im->w; c++, m++, cm >>= 1)
-                *d++ = (*m && (cm & 1)) ? attr + *m : 0;
+            if (!cols)
+                continue;
+            for (c = lo; c <= hi; c++)
+                d[c & 31] = m[c] ? attr + m[c] : 0;
         }
         win_nz = (1UL << h) - 1;        /* (cleared by the full path when it takes over) */
     }
@@ -476,6 +512,8 @@ void plane_frame(void)
                 im = 3 + (id - REF_O21F);
             else if (id == REF_O200)
                 im = o200_image(c, i);
+            else if (id == REF_O20A && pal_of(c) == 6 && o20a_halves(i, 0))
+                im = IMG_O20A;
             else if (id == REF_O1A1 && i >= 2 && pal_of(c) == 6 && c[-2].id == REF_O1A1 + 1
                      && c[-1].id == REF_O1A1 + 1 && (c[-1].info & 0x4000)
                      && c[-2].x == c->x - 28 * 64 && c[-1].x == c->x + 28 * 64
