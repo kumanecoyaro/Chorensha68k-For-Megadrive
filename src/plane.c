@@ -51,11 +51,16 @@ _Static_assert(ENEMY_BASE + PLANE_MAX_TILES <= VRAM_PLANE_A / 32, "plane A enemy
 #define IMG_SHIP   28                   /* $B44 (the right one mirrored; $B45 damaged): + mask - 1 */
 #define REF_O20E   0xB46                /* stage 4 large ship type $20E (obj20E): frames $B46..$B4D */
 #define IMG_O20E   35                   /* its frames (palette 9) */
+#define REF_O21A   0xB75                /* stage 5 battleship obj21a (palette 6): $B75, damaged $B76 */
+#define IMG_O21A   43
+#define REF_O213   0xB5B                /* stage 5 mid boss obj213 (palette 3) */
+#define IMG_O213   45
 #define REF_O216   0xB5E                /* stage 5 boss obj216: body; parts $B5F..$B67 over it, arms $B68.. */
-#define IMG_O216   43                   /* the body alone, + k: with part $B5E + k (k 1..9) */
+#define IMG_O216   46                   /* the body alone, + k: with part $B5E + k (k 1..9) */
 #define BOSS_IMG(m) ((m) == 2 || ((m) >= IMG_O205 && (m) < IMG_O1F0) || (u8)((m) - IMG_O216) < 10)
 #define LOAD_CHUNK 64                   /* tiles per VBlank */
 #define WROWS      29                   /* plane rows on screen (224 lines + fine scroll) */
+#define WIN_ROWS   32                   /* win[]: the window, or a still image up to 32 rows (obj21a) */
 
 typedef struct { s16 x, y; u16 id, info; } Call;
 extern Call calls[];
@@ -90,7 +95,7 @@ static s16 act_hs, act_vs, act_hs2, act_vs2;    /* of the frame shown (plane_vbl
 static u16 act_split;
 extern u16 split_line, split_vs, split_hs, act_n;
 
-static u16 win[WROWS][32];              /* visible rows, window row k = plane row top + k */
+static u16 win[WIN_ROWS][32];              /* visible rows, window row k = plane row top + k */
 static u32 win_nz;                      /* window rows holding something */
 static u32 vram_nz[2];                  /* plane rows (0..63) holding something in VRAM */
 static u8 wr_row[64], wr_win[64];       /* rows to write: plane row, window row (0xFF: empty row) */
@@ -227,6 +232,9 @@ static u8 o200_arms(const Call *c, u16 i, u16 *a);
 static void ship_drop_shown(void);
 static void drop_image_calls(s8 img, Call *c)
 {
+#ifdef PLANE_KEEP
+    return;                             /* (debug: the sprites drawn over the plane images) */
+#endif
 
     if ((u8)(img - IMG_O200) < 4) {
         u8 p = img < IMG_O200 + 2 ? 8 : 7, k;
@@ -245,6 +253,12 @@ static void drop_image_calls(s8 img, Call *c)
             c->id = EMPTY_REF;
     } else if ((u8)(img - IMG_SHIP) < 7) {
         ship_drop_shown();
+    } else if ((u8)(img - IMG_O21A) < 2) {
+        if (pal_of(c) == 6)
+            c->id = EMPTY_REF;
+    } else if (img == IMG_O213) {
+        if (pal_of(c) == 3)
+            c->id = EMPTY_REF;
     } else if ((u8)(img - IMG_O216) < 10) {
         if (pal_of(c) == 8)
             c->id = EMPTY_REF;
@@ -309,6 +323,7 @@ static u8 build_rows(s8 img, u32 cols, u8 mir, u8 k)
     return im->h;
 }
 
+#define ROWS_MASK(n) ((n) >= 32 ? 0xFFFFFFFFUL : (1UL << (n)) - 1)
 /* image rows into plane rows 0..h-1, a second image (img2 >= 0) into plane
  * rows 32..32+h2-1 (built in win[]), the other rows that hold something
  * cleared */
@@ -328,9 +343,9 @@ static void write_static(s8 img, u32 cols, u8 mir, s8 img2, u32 cols2, u8 mir2)
         h = build_rows(img, cols, mir, 0);
     if (img2 >= 0)
         h2 = build_rows(img2, cols2, mir2, h);
-    win_nz = (1UL << (h + h2)) - 1;     /* (cleared by the full path when it takes over) */
-    rows[0] = (1UL << h) - 1;
-    rows[1] = (1UL << h2) - 1;
+    win_nz = ROWS_MASK(h + h2);         /* (cleared by the full path when it takes over) */
+    rows[0] = ROWS_MASK(h);
+    rows[1] = ROWS_MASK(h2);
     /* rows to write: the image rows, and the other rows that hold something */
     wr_n = 0;
     for (half = 0; half < 2; half++) {
@@ -586,7 +601,8 @@ void plane_frame(void)
             }
             continue;
         }
-        big |= id < REF_O21F && id != REF_O1A1; /* (pl_refmap: the bosses and mid bosses below obj21f) */
+        big |= id < REF_O21F && id != REF_O1A1 /* (pl_refmap: the bosses and mid bosses below obj21f) */
+               && (u16)(id - REF_O21A) > 1;     /* (the stage 5 battleship fires no lasers) */
         if (BOSS_IMG(img))              /* (a boss chosen) */
             continue;
         if (id == REF_O216 && (pal_of(c) == 8 || (pal_of(c) >= 14 && (u8)(shown - IMG_O216) < 10))) {
@@ -618,6 +634,11 @@ void plane_frame(void)
                 im = 3 + (id - REF_O21F);
             else if (id == REF_O200)
                 im = o200_image(c, i);
+            else if ((u16)(id - REF_O21A) <= 1
+                     && (pal_of(c) == 6 || (pal_of(c) >= 14 && (u8)(shown - IMG_O21A) < 2)))
+                im = IMG_O21A + (id - REF_O21A);    /* (hit flash: the image kept) */
+            else if (id == REF_O213 && (pal_of(c) == 3 || (pal_of(c) >= 14 && shown == IMG_O213)))
+                im = IMG_O213;
             else if ((u16)(id - REF_O20E) <= 7
                      && (pal_of(c) == 9 || (pal_of(c) >= 14 && (u8)(shown - IMG_O20E) < 8)))
                 im = IMG_O20E + (id - REF_O20E);    /* (hit flash, palette 15: the image kept, */
@@ -865,7 +886,7 @@ void plane_fx_forget(void)
 void plane_reset(void)
 {
     u16 *w = &win[0][0], i;
-    for (i = 0; i < WROWS * 32; i++)
+    for (i = 0; i < WIN_ROWS * 32; i++)
         w[i] = 0;
     vram_nz[0] = vram_nz[1] = 0;
     win_nz = 0;

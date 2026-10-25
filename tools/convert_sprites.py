@@ -90,6 +90,12 @@ PLANE_GROUPS = [
     [   # stage 4 large ship type $20E (obj20E, 96 x 192 px, palette 9): its 8 frames $B46..$B4D
         [('obj20E', i, 0, 9)] for i in range(8)
     ],
+    [   # stage 5 battleship obj21a (palette 6, 128 x 256 px): $B75, damaged $B76
+        [('obj21a', 0, 0, 6)], [('obj21a', 1, 0, 6)],
+    ],
+    [   # stage 5 mid boss obj213 (palette 3, 160 x 80 px): $B5B
+        [('obj213', 0, 0, 3)],
+    ],
     [   # stage 5 boss obj216 (palette 8): the body $B5E alone, and with each of the parts
         # drawn over it ($B5F..$B67, at the body's position); the arms ($B68..) stay sprites
         [('obj216', 0, 0, 8)]] + [[('obj216', 0, 0, 8), ('obj216', k, 0, 8)] for k in range(1, 10)
