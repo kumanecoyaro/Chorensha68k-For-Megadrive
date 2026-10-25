@@ -45,6 +45,8 @@ _Static_assert(ENEMY_BASE + PLANE_MAX_TILES <= VRAM_PLANE_A / 32, "plane A enemy
 #define REF_O207   0xB34                /* stage 3 boss obj207: $B34..$B3B, second form $B3C / $B3D */
 #define IMG_O207   16                   /* $B34..$B3D */
 #define IMG_O1F0   26                   /* stage 3 type $1F0: obj200 body $B18, palette 9 */
+#define REF_O1A1   0xB16                /* stage 3 type $1A1 (obj1a0): centre $B16 after its pods $B17 */
+#define IMG_O1A1   27                   /* the pods fully out (palette 6) */
 #define LOAD_CHUNK 64                   /* tiles per VBlank */
 #define WROWS      29                   /* plane rows on screen (224 lines + fine scroll) */
 
@@ -212,6 +214,10 @@ static void drop_image_calls(s8 img, Call *c)
     } else if (img == IMG_O1F0) {
         if (pal_of(c) == 9)
             c->id = EMPTY_REF;
+    } else if (img == IMG_O1A1) {
+        if (pal_of(c) == 6) c->id = EMPTY_REF;
+        if (pal_of(c - 1) == 6) c[-1].id = EMPTY_REF;
+        if (pal_of(c - 2) == 6) c[-2].id = EMPTY_REF;
     } else if (img >= 2) {
         if (pal_of(c) == 7)
             c->id = EMPTY_REF;
@@ -451,7 +457,7 @@ void plane_frame(void)
             }
             continue;
         }
-        big |= id < REF_O21F;           /* (pl_refmap: the bosses and mid bosses below obj21f) */
+        big |= id < REF_O21F && id != REF_O1A1; /* (pl_refmap: the bosses and mid bosses below obj21f) */
         if (img == 2 || (img >= IMG_O205 && img < IMG_O1F0))     /* (a boss chosen) */
             continue;
         if (id == REF_BOSS || (u16)(id - REF_O205) <= 6 || (u16)(id - REF_O207) <= 9) {   /* a boss: first */
@@ -470,6 +476,11 @@ void plane_frame(void)
                 im = 3 + (id - REF_O21F);
             else if (id == REF_O200)
                 im = o200_image(c, i);
+            else if (id == REF_O1A1 && i >= 2 && pal_of(c) == 6 && c[-2].id == REF_O1A1 + 1
+                     && c[-1].id == REF_O1A1 + 1 && (c[-1].info & 0x4000)
+                     && c[-2].x == c->x - 28 * 64 && c[-1].x == c->x + 28 * 64
+                     && c[-2].y == c->y - 12 * 64 && c[-1].y == c[-2].y)
+                im = IMG_O1A1;              /* (the topmost of a formation, below) */
             if (im >= 0 && !on_screen(c, im))
                 im = -1;                    /* (off screen: nothing to gain) */
             if (im >= 0) {
@@ -478,7 +489,12 @@ void plane_frame(void)
                  * between two image groups (each switch reloads the tiles) */
                 u8 g = plane_img[im].group;
                 s16 d = 0;
-                if (shown >= 0) {
+                if (im == IMG_O1A1) {       /* the topmost, the one shown kept */
+                    s16 e = (c->x >> 6) - ax, f = (c->y >> 6) - ay;
+                    d = c->y >> 6;
+                    if (shown == IMG_O1A1 && (e < 0 ? -e : e) + (f < 0 ? -f : f) < 8)
+                        d -= 500;
+                } else if (shown >= 0) {
                     s16 e = (c->y >> 6) - ay;
                     d = (c->x >> 6) - ax;
                     d = (d < 0 ? -d : d) + (e < 0 ? -e : e);
