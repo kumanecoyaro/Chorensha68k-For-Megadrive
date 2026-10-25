@@ -260,6 +260,71 @@ static void write_static(s8 img, u32 cols)
 static u8 fx_ix[FX_CALLS];              /* their indices in calls[] */
 #define FX_THIN 10                      /* more bomb refs than this: half of them per redraw */
 static u8 thin_phase;
+/* Text rows 1-27 (the score line is the window plane): on plane A while it
+ * shows no large enemy and no effect (no per-line sprite limit: 16 sprites a
+ * line in H32 cut long lines, e.g. the credits, the stage clear bonus), else
+ * 8x8 sprites (xsp.c) */
+#define ST_TEXT    (-3)                 /* st_img: plane A holds the text */
+#define TEXT_ATTR  (0x8000 | (TEXT_PAL << 13) | FONT_TILE_BASE)
+extern u8 text_grid[32][32];
+extern u32 text_row_mask[32];
+extern u8 text_pl_dirty;
+u8 text_on_plane;                       /* (xsp.c: no text sprites) */
+
+static u32 text_rows(void)
+{
+    u32 m = 0;
+    u8 r;
+    for (r = 1; r < 28; r++)
+        if (text_row_mask[r])
+            m |= 1UL << r;
+    return m;
+}
+
+static void write_text(void)
+{
+    u8 r, c, pr, half;
+    clear_win_rows();
+    for (r = 1; r < 28; r++)
+        if (text_row_mask[r]) {
+            u16 *d = win[r];
+            const u8 *t = text_grid[r];
+            for (c = 0; c < 32; c++, t++)
+                *d++ = *t ? TEXT_ATTR + (*t & 0x7F) : 0;
+            win_nz |= 1UL << r;
+        }
+    wr_n = 0;
+    for (half = 0; half < 2; half++) {
+        u32 v = vram_nz[half] | (half ? 0 : win_nz);
+        for (pr = half << 5; v; v >>= 1, pr++)
+            if (v & 1) {
+                wr_row[wr_n] = pr;
+                wr_win[wr_n] = pr < WROWS && (win_nz >> pr & 1) ? pr : 0xFF;
+                wr_n++;
+            }
+    }
+    vram_nz[0] = win_nz;
+    vram_nz[1] = 0;
+    text_pl_dirty = 0;
+}
+
+/* x_wait (no frame built): the changed text into plane A if it shows the
+ * text; 0 = the sprites show it */
+u8 plane_text_refresh(void)
+{
+    if (st_img != ST_TEXT && (shown >= 0 || was_fx || st_img >= 0))
+        return text_on_plane = 0;
+    hs = vs = 0;
+    if (text_rows()) {
+        write_text();
+        st_img = ST_TEXT;
+    } else if (st_img == ST_TEXT) {
+        write_static(-1, 0);
+        st_img = -1;
+    }
+    return text_on_plane = 1;
+}
+
 #ifndef FX_PERIOD
 #define FX_PERIOD 3                     /* effects redrawn every FX_PERIOD frames */
 #endif
@@ -359,6 +424,14 @@ void plane_frame(void)
     if (!fx && !was_fx) {
         u32 cols = img >= 0 ? visible_cols(&plane_img[img], hs) : 0;
         wr_n = 0;
+        if (img < 0 && text_rows()) {   /* plane A free: the text rows */
+            if (st_img != ST_TEXT || text_pl_dirty)
+                write_text();
+            st_img = ST_TEXT;
+            text_on_plane = 1;
+            return;
+        }
+        text_on_plane = 0;
         if (img != st_img || cols != st_cols)
             write_static(img, cols);
         st_img = img; st_cols = cols;
@@ -374,6 +447,7 @@ void plane_frame(void)
     thin_phase ^= 1;
     was_fx = fx != 0;
     st_img = -2;                        /* (the static image is rewritten afterwards) */
+    text_on_plane = 0;
     held_n = 0;
 
     /* the visible rows */
@@ -427,6 +501,7 @@ void plane_reset(void)
     st_img = -1; st_cols = 0;           /* (the cleared plane: nothing written) */
     was_fx = 0;
     boss_seen = 0;
+    text_on_plane = 0;
     held_ok = 0;
 }
 

@@ -168,14 +168,17 @@ long x_xsp_out0(void)
  * below the score line are sprites, so text changed meanwhile is put into
  * the last frame's sprite list. */
 void xsp_text_refresh(void);
+u8 plane_text_refresh(void);
 long x_wait(long n)
 {
     u16 i;
     for (i = 0; i <= (u16)n; i++) {
         while (frame_ready)
             ;
-        if (text_spr_dirty)
+        if (text_spr_dirty) {
+            plane_text_refresh();       /* (plane A when free, else sprites) */
             xsp_text_refresh();
+        }
         frame_ready = 1;
         while (frame_ready)
             ;
@@ -216,6 +219,7 @@ u8 text_row_n[32];              /* non-blank characters per row */
 u32 text_row_mask[32];          /* bit c = column c holds a character */
 u8 text_dirty;
 u8 text_spr_dirty;              /* a row shown by sprites (1..) changed since the last flush */
+u8 text_pl_dirty;               /* a row 1.. changed since plane A last showed the text */
 
 /* fn_2f06a(x, y, ch) */
 long x_text_putc(long x, long y, long ch)
@@ -231,7 +235,7 @@ long x_text_putc(long x, long y, long ch)
         *p = c;
         text_dirty = 1;
         if (y & 31)
-            text_spr_dirty = 1;
+            text_spr_dirty = text_pl_dirty = 1;
     }
     return 0;
 }
@@ -248,7 +252,7 @@ long x_text_clear(void)
         text_row_mask[i] = 0;
     }
     text_dirty = 1;
-    text_spr_dirty = 1;
+    text_spr_dirty = text_pl_dirty = 1;
     return 0;
 }
 

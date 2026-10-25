@@ -260,7 +260,7 @@ void xsp_init(void)
     for (i = 0; i < 66; i++)
         bhead[i] = 0xFF;
     for (i = 0; i < 16; i++)
-        pal_attr[i] = 0x8000 | ((u16)pal_slot[i] << 13);
+        pal_attr[i] = (u16)pal_slot[i] << 13;   /* low priority: under the text (plane A, window) */
     VDP_CTRL32 = CRAM_W(2 * 32);
     for (i = 0; i < 32; i++)
         VDP_DATA = spr_cram[i];
@@ -274,10 +274,11 @@ void xsp_call(s16 x, s16 y, u16 id, u16 info);
 
 static u8 last_ntext;                   /* text sprites at the front of the last table */
 
+extern u8 text_on_plane;                /* (plane.c shows the text rows) */
 static void text_sprites(void)
 {
     u8 r, c, n = 0;
-    for (r = 1; r < 28; r++) {
+    for (r = text_on_plane ? 28 : 1; r < 28; r++) {
         u32 m = text_row_mask[r];
         for (c = 0; m; c++, m >>= 1)
             if (m & 1) {
@@ -307,7 +308,7 @@ void xsp_text_refresh(void)
             BASE[i] = table[last_ntext + i];
         base_valid = 1;
     }
-    for (r = 1; r < 28; r++) {
+    for (r = text_on_plane ? 28 : 1; r < 28; r++) {
         u32 m = text_row_mask[r];
         for (; m; m &= m - 1)
             n++;

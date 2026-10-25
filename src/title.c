@@ -35,7 +35,7 @@ void xsp_call(s16 x, s16 y, u16 id, u16 info);
 
 static const char *const items[4] = { 0, "CONTINUE", "CREDITS", "exit" };
 static const struct { u8 col; const char *s; u8 level, td_speed; } diff[3] = {
-    { 6, "EASY", 0, 0x0C }, { 12, "NORMAL", 0, 0x10 }, { 20, "HARD", 1, 0x10 },
+    { 7, "EASY", 0, 0x0C }, { 13, "NORMAL", 0, 0x10 }, { 21, "HARD", 1, 0x10 },
 };
 static u8 sel_diff = 1;
 
