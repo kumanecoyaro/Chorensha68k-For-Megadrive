@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fast profile of the Mega Drive ROM on unicorn's 68000 (a lean tools/uctrace.py).
 
-usage: ucprof.py game.elf ROM.bin --range A,B [--pad HEX] [--hot FN] [--period N]
+usage: ucprof.py game.elf ROM.bin --range A,B [--pad HEX] [--hot FN] [--fn FN] [--save FILE]
 
 Counts executed bytes per basic block (a block hook, not one Python call per
 instruction: some 20x faster than uctrace --profile) over the game frames
@@ -57,6 +57,7 @@ def main():
     waits += [(sym[k], sym[k] + 0x60) for k in ('x_xsp_out0', 'x_wait', 'x_screen_clear', 'x_xsp_out') if k in sym]
     st = {'n': 0, 'next': period, 'pend': False, 'in_int': False, 'vbl': 0, 'gf': 0, 'jump': None}
     prof = collections.Counter()
+    bsize = {}
     dbg = '--debug' in sys.argv
 
     fn_addr = sym.get(arg('--fn', ''), None)       # --fn FN: bytes per call of FN (callees included)
@@ -77,6 +78,7 @@ def main():
             st['pend'] = True
         if lo <= st['gf'] <= hi:
             prof[addr] += size
+            bsize[addr] = size
 
     def at_wait(uc, addr, size, ud):
         if addr == sym['x_vsync']:
@@ -148,6 +150,10 @@ def main():
             pc = vint
             st['in_int'] = True
             st['vbl'] += 1
+    if '--save' in sys.argv:                     # --save FILE: block address, size, times run
+        with open(arg('--save'), 'w') as f:
+            for a, c in sorted(prof.items()):
+                f.write(f'{a:x} {bsize[a]} {c // bsize[a]}\n')
     byname = collections.Counter()
     for a, c in prof.items():
         byname[name(a)] += c
