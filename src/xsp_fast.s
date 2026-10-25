@@ -25,6 +25,7 @@
     .set    ENEMY_PR, 0x34                  | the enemies
     .set    VLASER_A, 0x50                  | vertical laser segments (thick, thin): pairs
     .set    VLASER_B, 0x59                  | one above the other become one ref
+    .set    NEEDLE_PCG, 0x86                | (tools/convert_sprites.py NEEDLE_PCG)
     .set    ENEMY_ROOM, 16                  | sprites the enemy bullets leave them at most
     .set    EFFECT_LO, 0x0B5                | expl2 .. expl4
     .set    EFFECT_HI, 0x210
@@ -48,7 +49,7 @@
     .set    SMOKE_HI, 0x37
     .set    SMOKE_TO, 0x32
     .set    BULLET_PR, 0x3C                 | the enemy bullets: the sprite doubler's
-    .set    DBL_MAX, 24                     | (at most this many bullets in the lower part
+    .set    DBL_MAX, 40                     | (at most this many bullets in the lower part
     .set    DBL_A, 96                       | of the screen reuse the slots of bullets above
     .set    VRAM_HSCROLL, 0xDC00
     .set    DBL_B, 112                      | line DBL_A: src/xsp.c xsp_upload, the H-int)
@@ -117,14 +118,27 @@ h_xsp_set_main:
     cmp.w   #DEBRIS_LO, %d2             | debris.sp PCGs (particles): not drawn
     bcs.s   1f
     cmp.w   #DEBRIS_HI, %d2
-    bcs.s   8f
+    bcs     8f
 1:  cmp.w   #VLASER_B, %d2             | (most PCGs above: one compare)
-    bhi.s   29f
+    bhi.s   28f
     cmp.w   #VLASER_B, %d2
     beq     30f
     cmp.w   #VLASER_A, %d2
     beq     30f
-29: move.l  %d4, -(%sp)                | (only d0 / a0 are free)
+    bra.s   29f
+28: cmp.w   #NEEDLE_PCG, %d2            | the stage 3 boss's needle streams (palette 1):
+    bne.s   29f                         | two side by side as one sprite (pair_lut row 16)
+    move.l  %d0, -(%sp)
+    move.w  %d3, %d0
+    and.w   #0x0F00, %d0
+    cmp.w   #0x0100, %d0
+    movem.l (%sp)+, %d0                 | (movem: the flags kept)
+    bne.s   29f
+    st      needle_try
+    bra     20f
+29:
+xsp_set_rec:
+    move.l  %d4, -(%sp)                | (only d0 / a0 are free)
     move.w  ncalls, %d4
     cmp.w   #MAX_CALLS, %d4
     bcc.s   7f
@@ -233,10 +247,13 @@ pr_map:
     move.b  0(%a0,%d5.w), %d5
     and.w   #0xFF, %d5
     dbra    %d4, 4b
-    bra.s   25f
+    bra     25f
 3:  move.w  %d2, %d0                    | a pre-composited pair (pair_lut, by the
     sub.w   #LASER_LO, %d0              | step unflipped): the first call becomes
-    move.w  %d0, %d5                    | its ref (tools/convert_sprites.py PAIR_STEP)
+    tst.b   needle_try                  | its ref (tools/convert_sprites.py PAIR_STEP)
+    beq.s   37f
+    moveq   #16, %d0                    | (the needles' row)
+37: move.w  %d0, %d5
     lsl.w   #5, %d5
     add.w   %d0, %d5                    | pcg * 33
     move.w  %d5, %d0
@@ -258,14 +275,19 @@ pr_map:
 35: add.w   %d5, %d0
     lea     pair_lut, %a0
     moveq   #0, %d5
-    move.b  0(%a0,%d0.w), %d5
+    move.w  %d0, %d5
+    add.l   %d5, %d5
+    move.w  0(%a0,%d5.l), %d5
     beq.s   36f
     add.w   #PAIR_REF - 1, %d5
     move.w  %d5, 4(%a1)
     movem.l (%sp)+, %d4-%d6/%a1
+    sf      needle_try
     moveq   #1, %d0
     rts
-36: bset    #6, 4(%a1)                  | id bit 14 (as a text cell: xsp_build looks
+36: tst.b   needle_try                  | (needles: no runtime pair, recorded as they are)
+    bne.s   25f
+    bset    #6, 4(%a1)                  | id bit 14 (as a text cell: xsp_build looks
     bset    #4, 6(%a1)                  | there) and info bit 12: a pair, dx + 16 / dy + 16 in
     and.w   #0xFFC0, (%a1)              | the first one's x / y fraction bits (the
     or.w    %d6, (%a1)                  | sprites only use whole pixels)
@@ -275,7 +297,10 @@ pr_map:
     moveq   #1, %d0
     rts
 25: movem.l (%sp)+, %d4-%d6/%a1
-    bra     h_xsp_set_main
+    tst.b   needle_try
+    beq     h_xsp_set_main
+    sf      needle_try
+    bra     xsp_set_rec
 
 | a vertical laser segment (the lasers fired straight down): 16 px above or
 | below the last call of its priority, the same PCG, info and x: the two
@@ -460,7 +485,7 @@ xsp_build:
 2:  cmp.b   #0xFF, %d6
     beq     80f
     cmp.w   hw_limit, %d7
-    bcc     80f
+    bcc     82f
     move.w  %d6, -(%sp)                 | keep the call index
     lsl.w   #3, %d6
     lea     calls, %a3
@@ -722,12 +747,12 @@ xsp_build:
     move.w  %d0, %d5
     add.w   #32, %d5
     cmp.w   #288, %d5                   | -32 < sx < 256
-    bcc.s   68f
+    bcc     68f
     add.w   %a6, %d1                    | sy
     move.w  %d1, %d5
     add.w   #32, %d5
     cmp.w   #256, %d5                   | -32 < sy < 224
-    bcc.s   68f
+    bcc     68f
     move.w  2(%sp), %d5
     eor.w   %d5, %d3
     and.w   #15, %d3                    | palette
@@ -739,7 +764,7 @@ xsp_build:
     and.w   #511, %d5
     lsl.w   #3, %d5
     cmp.w   0(%a4,%d5.w), %d4
-    bne.s   38f
+    bne     38f
     move.w  %a2, 4(%a4,%d5.w)
     move.w  2(%a4,%d5.w), %d4
 37: add.w   %d3, %d3
@@ -751,7 +776,27 @@ xsp_build:
     or.w    %d5, %d4
     and.w   #15, %d2
     lsl.w   #8, %d2
+    cmp.w   #BULLET_PR, 6(%sp)          | a bullet ref's piece below DBL_B (the needle
+    bne.s   66f                         | pairs): into the doubler's list, its size kept
+    tst.b   dbl_on
+    beq.s   66f
+    cmp.w   #DBL_B, %d1
+    blt.s   66f
+    move.w  dbl_n, %d5
+    cmp.w   #DBL_MAX, %d5
+    bcc.s   66f
+    addq.w  #1, dbl_n
+    lsl.w   #3, %d5
+    lea     dbl_b, %a1
+    add.w   %d5, %a1
     add.w   #128, %d1
+    move.w  %d1, (%a1)+
+    move.w  %d2, (%a1)+                 | (the link: the slot's, src/xsp.c)
+    move.w  %d4, (%a1)+
+    add.w   #128, %d0
+    move.w  %d0, (%a1)
+    bra.s   68f
+66: add.w   #128, %d1
     move.w  %d1, (%a0)+
     addq.w  #1, %d7
     or.w    %d7, %d2                    | size | link
@@ -767,7 +812,7 @@ xsp_build:
 69: addq.l  #2, %sp
     bra.s   70f
 38: bsr     lookup_slow
-    bne.s   37b
+    bne     37b
     bra.s   68b
 
 | -- next call in this priority
@@ -775,6 +820,75 @@ xsp_build:
     lea     call_next, %a1
     move.b  0(%a1,%d6.w), %d6
     bra     2b
+| the table full in the enemy bullets with the doubler on: the rest still
+| scanned for bullets below DBL_B (into the doubler's list, no table slot)
+82: cmp.w   #BULLET_PR, (%sp)
+    bne     80f
+    tst.b   dbl_on
+    beq     80f
+83: cmp.b   #0xFF, %d6
+    beq     80f
+    cmp.w   #DBL_MAX, dbl_n
+    bcc     80f
+    move.w  %d6, %d5
+    lsl.w   #3, %d5
+    lea     calls, %a3
+    add.w   %d5, %a3
+    move.w  4(%a3), %d2
+    bpl     89f                         | (a ref)
+    btst    #14, %d2
+    bne     89f                         | (a pair / text cell)
+    move.w  2(%a3), %d1
+    asr.w   #6, %d1
+    sub.w   #16, %d1                    | sy
+    cmp.w   #DBL_B, %d1
+    blt     89f
+    cmp.w   #223, %d1
+    bgt     89f
+    move.w  (%a3), %d0
+    asr.w   #6, %d0
+    sub.w   #16, %d0                    | sx
+    add.w   %d2, %d2
+    lea     pcg_block, %a1
+    move.w  0(%a1,%d2.w), %d4
+    move.w  6(%a3), %d3                 | info
+    move.w  %d3, %d2
+    lsr.w   #8, %d2
+    and.w   #15, %d2                    | palette
+    lsl.w   #4, %d4
+    or.w    %d2, %d4                    | key
+    move.w  %d4, %d5
+    lsr.w   #7, %d5
+    eor.w   %d4, %d5
+    and.w   #511, %d5
+    lsl.w   #3, %d5
+    cmp.w   0(%a4,%d5.w), %d4
+    bne.s   87f
+    move.w  %a2, 4(%a4,%d5.w)
+    move.w  2(%a4,%d5.w), %d4
+86: add.w   %d2, %d2
+    lea     pal_attr, %a1
+    or.w    0(%a1,%d2.w), %d4
+    and.w   #0xC000, %d3
+    lsr.w   #3, %d3
+    or.w    %d3, %d4                    | attr
+    move.w  dbl_n, %d3
+    addq.w  #1, dbl_n
+    lsl.w   #3, %d3
+    lea     dbl_b, %a1
+    add.w   %d3, %a1
+    add.w   #128, %d1
+    move.w  %d1, (%a1)+
+    move.w  #0x0500, (%a1)+
+    move.w  %d4, (%a1)+
+    add.w   #128, %d0
+    move.w  %d0, (%a1)
+    bra.s   89f
+87: bsr     lookup_slow
+    bne.s   86b
+89: lea     call_next, %a1
+    move.b  0(%a1,%d6.w), %d6
+    bra     83b
 80: cmp.w   #BULLET_PR, (%sp)
     bne.s   81f
 85: move.w  dbl_rn, %d3                 | more bullets below than slots above: empty
@@ -1081,6 +1195,8 @@ dbl_b:       .space DBL_MAX * 8
 dbl_slot:    .space DBL_MAX
     .balign 2
     .globl  act_n, hint_n, act_slot, act_b, act_a, split_line, split_vs, split_hs
+needle_try:  .byte 0                    | h_xsp_set_main: a needle pair being looked for
+    .balign 2
 split_line:  .word 0                    | plane A split for the frame shown (_hint):
 split_vs:    .word 0                    | from this line on (0: none) this scroll
 split_hs:    .word 0

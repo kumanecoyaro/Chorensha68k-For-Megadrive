@@ -106,6 +106,10 @@ PAIR_STEP = {0x51: (-3, 15), 0x52: (-6, 14), 0x53: (-8, 13), 0x54: (-11, 11),
              0x55: (-13, 8), 0x56: (-14, 6), 0x57: (-15, 3), 0x58: (-15, 0)}
 for _t, _k in zip(range(0x5A, 0x60), range(0x51, 0x57)):
     PAIR_STEP[_t] = PAIR_STEP[_k]   # the thin ones ($59 vertical)
+# the stage 3 boss's needle streams ($86, palette 1, src/xsp_fast.s h_xsp_set_main):
+# two lanes 8 px apart, the second ~10 px lower (table row 16)
+NEEDLE_PCG = 0x86
+NEEDLE_STEPS = [(dx, dy) for dx in (-8, 8) for dy in (9, 10, 11, 12)]
 NO_MERGE = {'debris1', 'debris2', 'expl4', 'sonic1', 'sonic2', 'ele_arc'}
 
 def md_rgb(c):
@@ -251,6 +255,7 @@ def main(xsp, out):
                             # relative to the object centre (sprite coordinate x>>6 is centre + 8)
                             g[(ax - 16 + x, ay - 16 + y)] = v
             emit(groups)
+    freq_kept = collections.Counter(idx_freq)   # (the synthetic refs below don't change the palette slots)
     # synthetic refs (src/xsp_fast.s h_xsp_set_main): two vertical laser segments
     # one above the other (the lasers fired straight down) as one 16 x 32 sprite
     for p in VLASER_PCGS:
@@ -264,27 +269,28 @@ def main(xsp, out):
         emit({0: g})
     vlaser_ref = len(ref_start) - len(VLASER_PCGS)
     pair_ref = len(ref_start)
-    pair_lut = [0] * (16 * 33 * 33)
-    for p, (sx, sy) in sorted(PAIR_STEP.items()):
+    pair_lut = [0] * (17 * 33 * 33)
+    steps = [(p, p - 0x50, [((sx + ddx) * sgn, (sy + ddy) * sgn) for ddx in (-1, 0, 1)
+                            for ddy in (-1, 0, 1) for sgn in (1, -1)])
+             for p, (sx, sy) in sorted(PAIR_STEP.items())]
+    steps.append((NEEDLE_PCG, 16, [(dx * sgn, dy * sgn) for dx, dy in NEEDLE_STEPS for sgn in (1, -1)]))
+    for p, row, offs in steps:
         px = pcg16(pcg, p)
-        for ddx in (-1, 0, 1):
-            for ddy in (-1, 0, 1):
-                for sgn in (1, -1):
-                    dx, dy = (sx + ddx) * sgn, (sy + ddy) * sgn
-                    if abs(dx) > 16 or abs(dy) > 16:
-                        continue
-                    k = (p - 0x50) * 33 * 33 + (dy + 16) * 33 + dx + 16
-                    if pair_lut[k]:
-                        continue
-                    ref_start.append(len(pieces))
-                    g = {}
-                    for y in range(16):
-                        for x in range(16):
-                            if px[y * 16 + x]:
-                                g[(x - 16, y - 16)] = g[(x - 16 + dx, y - 16 + dy)] = px[y * 16 + x]
-                    emit({0: g})
-                    pair_lut[k] = len(ref_start) - pair_ref
-    assert len(ref_start) - pair_ref < 256
+        for dx, dy in offs:
+            if abs(dx) > 16 or abs(dy) > 16:
+                continue
+            k = row * 33 * 33 + (dy + 16) * 33 + dx + 16
+            if pair_lut[k]:
+                continue
+            ref_start.append(len(pieces))
+            g = {}
+            for y in range(16):
+                for x in range(16):
+                    if px[y * 16 + x]:
+                        g[(x - 16, y - 16)] = g[(x - 16 + dx, y - 16 + dy)] = px[y * 16 + x]
+            emit({0: g})
+            pair_lut[k] = len(ref_start) - pair_ref
+    idx_freq.clear(); idx_freq.update(freq_kept)
     ref_start.append(len(pieces))
     nref = len(ref_start) - 1
     if os.environ.get('SPR_STATS'):
@@ -398,7 +404,7 @@ def main(xsp, out):
             L.append('  ' + ','.join(str(v) for v in vals[i:i + per]) + ',')
         L.append('};')
     arr('u16', 'pcg_block', pcg_block)
-    arr('u8', 'pair_lut', pair_lut, 33)
+    arr('u16', 'pair_lut', pair_lut, 33)
     arr('u16', 'ref_start', ref_start)
     # bounding box of each ref's pieces (x0, y0, x1, y1; x1 / y1 exclusive), for culling
     box = []

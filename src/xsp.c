@@ -34,7 +34,7 @@ static u16 cache_a_base = BG_TILE_COUNT, cache_a_n = (CACHE_B_BASE - BG_TILE_COU
 #define KEY_EMPTY 0xFFFF
 #define NO_ENTRY  0xFFFF
 
-#define STAGE_BYTES 4096            /* tiles converted per frame, DMAed in VBlank */
+#define STAGE_BYTES 3584            /* tiles converted per frame, DMAed in VBlank (RAM: the doubler's lists) */
 #define MAX_UP 48
 #define MAX_HW 64
 
@@ -75,6 +75,8 @@ extern u16 dbl_n, dbl_rn, act_n;
 extern volatile u16 hint_n;
 extern HwSpr dbl_b[], act_b[], act_a[];
 extern u8 dbl_slot[], act_slot[], dbl_on;
+#define DBL_A   96                      /* (src/xsp_fast.s) */
+#define DBL_MAX 40
 static u8 ntable, table_ready;
 
 /* ------------------------------------------------------------ VRAM cache */
@@ -715,10 +717,22 @@ void xsp_flush(void)
         else if (hold)
             hold--;
         dbl_on = hold != 0;
+        if (dbl_n > dbl_rn) {
+            /* more bullets below than bullet slots above: any entry done by
+             * line DBL_A (bottom above it) takes one */
+            u16 j;
+            for (k = 0, j = 0; j < n && k < DBL_MAX; j++) {
+                s16 y0 = table[j].y - 128;
+                if (y0 + (s16)((((table[j].size >> 8) & 3) + 1) * 8) <= DBL_A)
+                    dbl_slot[k++] = j;
+            }
+            if (k > dbl_rn)
+                dbl_rn = k;
+        }
         if (dbl_n > dbl_rn)
             dbl_n = dbl_rn;
         for (k = 0; k < dbl_n; k++)
-            dbl_b[k].size = 0x0500 | (table[dbl_slot[k]].size & 0x7F);
+            dbl_b[k].size = (dbl_b[k].size & 0x0F00) | (table[dbl_slot[k]].size & 0x7F);
     }
     ncalls = 0;
     pl_n = 0;
