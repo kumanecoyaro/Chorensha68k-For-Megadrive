@@ -191,8 +191,17 @@ void sound_dma(u8 on)
 }
 
 /* fn_034ae */
+#ifdef TEST_SNDLOG
+u8 snd_log[256][2];                     /* (debug) requests: number, frame */
+u8 snd_log_n;
+#endif
 void sound_request(u8 no)
 {
+#ifdef TEST_SNDLOG
+    if (no != 0x20) {
+        snd_log[snd_log_n][0] = no; snd_log[snd_log_n][1] = 0; snd_log_n++;
+    }
+#endif
 #ifdef NO_SFX
     return;
 #endif

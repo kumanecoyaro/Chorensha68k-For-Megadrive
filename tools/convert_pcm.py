@@ -15,7 +15,7 @@ Output:
   OUT_DIR/pcm.bin    all samples, each starting on an even address
   OUT_DIR/pcm.c/.h   pcm_table[256] = { offset, length, priority } by PCM number
 """
-import os, re, struct, sys, wave
+import math, os, re, struct, sys, wave
 
 STEPS = [16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97,
          107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449,
@@ -53,14 +53,20 @@ def resample(samples, src, dst):
         out.append(int(round(a + (b - a) * f)))
     return out
 
-PEAK = 120          # normalise every effect to this peak (8-bit, around 128)
+GAIN = 2.5          # one gain for every effect: the original's relative levels (the shot
+                    # p_fire1 peaks at 1/8 of the big explosions)
 
 def normalise(samples):
-    """The X68000 ADPCM data is quiet (p_fire1 peaks at ~1/8 of full scale) and
-    the MD DAC only has the level of one FM channel, so scale each effect up."""
-    peak = max(1, max(abs(v) for v in samples) >> 4)
-    g = max(1.0, PEAK / peak)
-    return [int(v * g) for v in samples]
+    """The X68000 ADPCM data is on the quiet side and the MD DAC only has the
+    level of one FM channel: every effect is scaled by GAIN (keeping their
+    levels relative to each other), the loudest ones soft-clipped."""
+    out = []
+    for v in samples:
+        x = v * GAIN / 2048
+        if abs(x) > 0.5:                # soft knee above half scale (slope 1 at the knee)
+            x = math.copysign(0.5 + 0.5 * math.tanh((abs(x) - 0.5) * 2), x)
+        out.append(int(x * 2047))
+    return out
 
 def to_u8(samples):
     return bytes(max(0, min(255, (s >> 4) + 128)) for s in samples)

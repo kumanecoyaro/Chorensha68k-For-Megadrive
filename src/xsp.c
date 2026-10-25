@@ -465,17 +465,6 @@ void xsp_flush(void)
     xframe++;
 }
 
-/* a skipped frame (x_xsp_out): its calls are dropped, nothing is built */
-void xsp_skip(void)
-{
-    u16 p;
-    for (p = pr_lo; p <= pr_hi && p < 66; p++)
-        bhead[p] = 0xFF;
-    ncalls = 0;
-    pl_n = 0;
-    pr_lo = 64; pr_hi = 0;
-}
-
 void dma_rom(u16 vram, const u32 *src, u16 words);
 
 /* VBlank: new tiles, then the sprite table */

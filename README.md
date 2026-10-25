@@ -50,7 +50,7 @@ X68000 もメガドライブも CPU は 68000 なので、ゲームロジック�
 | 効果音 PCM（8bit 13.3 kHz、全 62 番） | 523 KB |
 | BGM（MDX 13 曲 + 音色） | 72 KB |
 
-* 効果音: MSM6258 ADPCM → 8bit 符号なし PCM（YM2612 DAC 用、13317 Hz）、ピーク正規化。Z80 が YM2612 の
+* 効果音: MSM6258 ADPCM → 8bit 符号なし PCM（YM2612 DAC 用、13317 Hz）、全効果音に同じ倍率（2.5 倍、半分を超える所はソフトクリップ）で原作の音量比を保つ。Z80 が YM2612 の
   タイマー A で一定間隔に DAC へ出す（ROM から Z80 RAM へ先読み、VDP DMA 中は ROM を読まない）。
   同時に 68000 からの YM2612 書き込みキューを 1 ティックに 1 件ずつ処理する。
 * BGM: MDX をそのまま格納し、両チップ共通の音色パラメータで YM2612 で演奏（YM2151 の DT2 は近い MUL に置き換え、
@@ -91,7 +91,7 @@ make XDF=path/to/CH68_110_1.xdf
 | `tools/z80_pcm_driver.py` | Z80 ドライバ生成（DAC 再生 + YM2612 書き込みキュー） |
 | `tools/mdx.py`, `tools/convert_bgm.py` | MDX 解析 / チャンネル割り当て・音程表の生成 |
 | `tools/rom_budget.py` | ROM サイズ集計 |
-| `tools/build_variant.sh` | デバッグ用ビルド（`-DTEST_MUTEKI` 無敵, `-DFRAME_PROBE` 処理時間計測, `-DPLANE_ONLY` プレーンAだけ表示, `-DTEST_CRAB_HP1` 1 面の蟹が一撃で死ぬ（obj21f の確認用）, `-DTEST_STAGE=2` 2 面から開始, `-DTEST_KEYLOG` CPU 変換したスプライトのキーを記録, `-DTEST_BGLOG` 描いたチップを記録, `-DTEST_FAILLOG` スプライトのタイル読み込み失敗を記録, `-DSKIP_MAX=n` 連続フレームスキップ数, `-DZ80_PEEK` ほか） |
+| `tools/build_variant.sh` | デバッグ用ビルド（`-DTEST_MUTEKI` 無敵, `-DFRAME_PROBE` 処理時間計測, `-DPLANE_ONLY` プレーンAだけ表示, `-DTEST_CRAB_HP1` 1 面の蟹が一撃で死ぬ（obj21f の確認用）, `-DTEST_STAGE=2` 2 面から開始, `-DTEST_KEYLOG` CPU 変換したスプライトのキーを記録, `-DTEST_BGLOG` 描いたチップを記録, `-DTEST_FAILLOG` スプライトのタイル読み込み失敗を記録, `-DZ80_PEEK` ほか） |
 | `tools/fixrom.py` | ROM ヘッダとチェックサムの設定 |
 | `tools/mdrun.py` | libretro コア（Genesis Plus GX）でのヘッドレス実行・スクリーンショット |
 | `tools/uctrace.py` | unicorn の 68000 で ROM を実行（ROM 書き込み検出・プロファイル・命令数計測） |
