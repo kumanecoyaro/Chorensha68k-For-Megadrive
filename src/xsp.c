@@ -595,6 +595,62 @@ static void plchk_after(const Call *pc, u16 n)
     }
 }
 #endif
+#ifdef TEST_DROPCHK
+/* (debug) enemies ($34 refs) on screen but none of their pieces in the
+ * built table: per ref id (16 slots), the frames it happened */
+u16 drop_id[32], drop_cnt[32], drop_seen[32], drop_frame, drop_why, drop_n, drop_ncalls;
+Call drop_call;
+static Call dc_call[24];
+static u8 dc_n;
+static void dropchk_before(void)
+{
+    u8 c;
+    dc_n = 0;
+    for (c = bhead[0x34]; c != 0xFF && dc_n < 24; c = call_next[c])
+        if (!(calls[c].id & 0x8000) && calls[c].id != 0x6d)
+            dc_call[dc_n++] = calls[c];
+}
+static void dropchk_after(u16 n)
+{
+    u8 k;
+    for (k = 0; k < dc_n; k++) {
+        const Call *pc = &dc_call[k];
+        u16 id = pc->id, q, j, found = 0, vis = 0, s, why = 0;
+        u8 pal = (pc->info >> 8) & 15;
+        s16 px = pc->x >> 6, py = pc->y >> 6;
+        for (q = ref_start[id]; q < ref_start[id + 1] && !found; q++) {
+            const SprPiece *pp = &ref_pieces[q];
+            u16 key = (pp->block << 4) | ((pal ^ pp->palx) & 15), h = hslot(key);
+            s16 sx = px + pp->dx, sy = py + pp->dy;
+            if (sx <= 0 || sx >= 240 || sy <= 0 || sy >= 208)
+                continue;
+            vis = 1;
+            while (htab[h].key != key && htab[h].key != KEY_EMPTY)
+                h = (h + 1) & (HASH_SIZE - 1);
+            if (htab[h].key != key) {
+                why |= 1;
+                continue;
+            }
+            why |= 2;
+            for (j = 0; j < n; j++)
+                if ((table[j].attr & 0x7FF) == htab[h].tile)
+                    found = 1;
+        }
+        if (!vis)
+            continue;
+        for (s = 0; s < 32 && drop_id[s] && drop_id[s] != id; s++)
+            ;
+        if (s == 32)
+            continue;
+        drop_id[s] = id;
+        drop_seen[s]++;
+        if (!found) {
+            drop_cnt[s]++;
+            drop_frame = xframe; drop_why = why; drop_n = n; drop_ncalls = ncalls; drop_call = *pc;
+        }
+    }
+}
+#endif
 void xsp_flush(void)
 {
     u16 n;
@@ -626,7 +682,13 @@ void xsp_flush(void)
             plchk[3]++;
     }
 #endif
+#ifdef TEST_DROPCHK
+    dropchk_before();
+#endif
     n = xsp_build(table);
+#ifdef TEST_DROPCHK
+    dropchk_after(n);
+#endif
 #ifdef TEST_PLCHK
     if (have_pl)
         plchk_after(&plc, n);

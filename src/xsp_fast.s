@@ -22,6 +22,8 @@
     .set    PLAYER_LO, 0xABD                | player.ref, player2.ref
     .set    PLAYER_HI, 0xAD5
     .set    PLAYER_ROOM, 4                  | sprites kept free for the player after $3F
+    .set    ENEMY_PR, 0x34                  | the enemies
+    .set    ENEMY_ROOM, 16                  | sprites the enemy bullets leave them at most
     .set    EFFECT_LO, 0x0B5                | expl2 .. expl4
     .set    EFFECT_HI, 0x210
     .set    PARTICLE_LO, 0x210              | spark, debris1, debris2: not drawn
@@ -339,6 +341,9 @@ xsp_build:
     cmp.w   #0x3F, %d0                  | the front ($3F: the bomb ...) leaves room
     bne.s   3f                          | for the player ship ($3E, 2 pieces)
     move.w  #MAX_HW - PLAYER_ROOM, hw_limit
+3:  cmp.w   #BULLET_PR, %d0             | the enemy bullets (lasers) leave room for
+    bne.s   3f                          | the enemies ($34, drawn after them)
+    bsr     enemy_room
 3:  cmp.w   #EFFECT_PR, %d0
     bne.s   3f
     move.w  %d7, %d1                    | effects: FX_MAX more at most
@@ -677,7 +682,7 @@ xsp_build:
 67: addq.l  #2, %sp
 69: addq.l  #2, %sp
     bra.s   70f
-38: bsr.s   lookup_slow
+38: bsr     lookup_slow
     bne.s   37b
     bra.s   68b
 
@@ -691,7 +696,7 @@ xsp_build:
 85: move.w  dbl_rn, %d3                 | more bullets below than slots above: empty
     cmp.w   dbl_n, %d3                  | entries for them (y 0: off the screen)
     bcc.s   81f
-    cmp.w   #MAX_HW, %d7
+    cmp.w   hw_limit, %d7
     bcc.s   81f
     addq.w  #1, dbl_rn
     lea     dbl_slot, %a1
@@ -713,6 +718,41 @@ xsp_build:
 91: add.l   %d7, stat_out
     move.w  %d7, %d0
     movem.l (%sp)+, %d2-%d7/%a2-%a6
+    rts
+
+| hw_limit for the enemy bullets: MAX_HW less the sprites of the enemies
+| ($34: a ref's pieces, a PCG one), ENEMY_ROOM at most (several laser
+| enemies' beams took every sprite and all of them vanished); the doubler
+| still brings back bullets below its line.  (d1-d4, a1, a3, a6)
+enemy_room:
+    lea     bhead, %a1
+    lea     ref_start, %a6
+    moveq   #0, %d2
+    moveq   #0, %d1
+    move.b  ENEMY_PR(%a1), %d1
+    lea     calls, %a1
+    lea     call_next, %a3
+1:  cmp.b   #0xFF, %d1
+    beq.s   3f
+    move.w  %d1, %d3
+    lsl.w   #3, %d3
+    move.w  4(%a1,%d3.w), %d4
+    bmi.s   2f                          | a PCG
+    add.w   %d4, %d4
+    add.w   2(%a6,%d4.w), %d2           | a ref: its pieces
+    sub.w   0(%a6,%d4.w), %d2
+    subq.w  #1, %d2
+2:  addq.w  #1, %d2
+    cmp.w   #ENEMY_ROOM, %d2
+    bcc.s   3f
+    move.b  0(%a3,%d1.w), %d1           | next
+    bra.s   1b
+3:  cmp.w   #ENEMY_ROOM, %d2
+    bls.s   4f
+    moveq   #ENEMY_ROOM, %d2
+4:  move.w  #MAX_HW, %d1
+    sub.w   %d2, %d1
+    move.w  %d1, hw_limit
     rts
 
 | key d4 not at its home slot: probe on (d5 = home offset); d4 = tile, Z if none

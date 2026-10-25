@@ -601,8 +601,10 @@ void plane_frame(void)
                 im = 3 + (id - REF_O21F);
             else if (id == REF_O200)
                 im = o200_image(c, i);
-            else if ((u16)(id - REF_O20E) <= 7 && pal_of(c) == 9)
-                im = IMG_O20E + (id - REF_O20E);
+            else if ((u16)(id - REF_O20E) <= 7
+                     && (pal_of(c) == 9 || (pal_of(c) >= 14 && (u8)(shown - IMG_O20E) < 8)))
+                im = IMG_O20E + (id - REF_O20E);    /* (hit flash, palette 15: the image kept, */
+                                                    /* the flash sprite over it) */
             else if (id == REF_O1A1 && i >= 2 && pal_of(c) == 6 && c[-2].id == REF_O1A1 + 1
                      && c[-1].id == REF_O1A1 + 1 && (c[-1].info & 0x4000)
                      && c[-2].x == c->x - 28 * 64 && c[-1].x == c->x + 28 * 64
