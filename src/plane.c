@@ -35,6 +35,7 @@
 #define EMPTY_REF  REF_EMPTY            /* a dropped call (spr.h: a ref without pieces) */
 #define REF_CRAB   0xB1E                /* obj202: left half, right half, centre */
 #define REF_BOSS   0xB29                /* obj204 */
+#define REF_O201   0xB1B                /* obj201: body, wing (x2, the right one mirrored), part below (x2) */
 #define LOAD_CHUNK 64                   /* tiles per VBlank */
 #define WROWS      29                   /* plane rows on screen (224 lines + fine scroll) */
 
@@ -187,7 +188,12 @@ static u8 put_ref(const Call *cl, s16 top)
  * sprite, over it) */
 static void drop_image_calls(s8 img, Call *c)
 {
-    if (img == 2) {
+    if (img >= 3) {                     /* obj201 */
+        s8 k;
+        for (k = -2; k <= (img == 4 ? 2 : 0); k++)
+            if (pal_of(c + k) == 3)
+                c[k].id = EMPTY_REF;
+    } else if (img == 2) {
         if (pal_of(c) == 7)
             c->id = EMPTY_REF;
     } else {
@@ -377,20 +383,38 @@ void plane_frame(void)
             }
             continue;
         }
-        if ((u16)(id - REF_CRAB) > REF_BOSS - REF_CRAB || img == 2)
+        if ((u16)(id - REF_O201) > REF_BOSS - REF_O201 || img == 2)
             continue;
         if (id == REF_BOSS) {
             best = i; img = 2;
             boss_seen = 1;
             continue;
         }
-        if (id == REF_CRAB + 2 && i >= 2 && c[-2].id == REF_CRAB && c[-1].id == REF_CRAB + 1
-            && c[-2].y == c->y && c[-1].y == c->y) {
-            s16 d = (c->x >> 6) - ax, e = (c->y >> 6) - ay;
-            d = (d < 0 ? -d : d) + (e < 0 ? -e : e);
-            if (shown < 0 || d < bd) {
-                bd = d; best = i;
-                img = ((c->x - c[-2].x) >> 6) <= 2 ? 0 : 1;
+        {
+            s8 im = -1;
+            if (id == REF_CRAB + 2 && i >= 2 && c[-2].id == REF_CRAB && c[-1].id == REF_CRAB + 1
+                && c[-2].y == c->y && c[-1].y == c->y)
+                im = ((c->x - c[-2].x) >> 6) <= 2 ? 0 : 1;
+            else if (id == REF_O201 && i >= 2 && c[-2].id == REF_O201 + 1 && c[-1].id == REF_O201 + 1
+                     && c[-2].y == c[-1].y && (c[-1].info & 0x4000)) {
+                /* wings closed (16 px, 8 above) or fully open (29 px, 9.6 above,
+                 * with the two parts below) */
+                s16 dw = c[-1].x - c[-2].x, dy = c->y - c[-2].y;
+                if (dw == 32 * 64 && dy == 8 * 64)
+                    im = 3;
+                else if (dw == 58 * 64 && dy == 616 && i + 2 < ncalls
+                         && c[1].id == REF_O201 + 2 && c[2].id == REF_O201 + 2)
+                    im = 4;
+            }
+            if (im >= 0) {
+                /* the one already shown (nearest), and one whose tiles are in VRAM */
+                s16 d = (c->x >> 6) - ax, e = (c->y >> 6) - ay;
+                d = (d < 0 ? -d : d) + (e < 0 ? -e : e);
+                if (plane_img[im].group != loaded)
+                    d += 1000;
+                if (d < bd) {
+                    bd = d; best = i; img = im;
+                }
             }
         }
     }
