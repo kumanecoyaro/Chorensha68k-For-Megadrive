@@ -515,12 +515,16 @@ void plane_frame(void)
                  * between two image groups (each switch reloads the tiles) */
                 u8 g = plane_img[im].group;
                 s16 d = 0;
-                if (im == IMG_WING) {       /* the wing most on screen, the one shown kept */
-                    s16 l = (c->x >> 6) + img_left(&plane_img[im], c->info & 0x4000), r = l + plane_img[im].w * 8;
-                    s16 e = (c->x >> 6) - ax, f = (c->y >> 6) - ay;
-                    d = 256 - ((r > 256 ? 256 : r) - (l < 0 ? 0 : l));
-                    if (shown == IMG_WING && (e < 0 ? -e : e) + (f < 0 ? -f : f) < 8)
-                        d -= 64;
+                if (im == IMG_WING) {
+                    /* the one shown kept while it lasts; else the wing farthest
+                     * out (coming in at a screen edge: the inner ones are
+                     * mostly shot down soon) */
+                    s16 l = (c->x >> 6) + img_left(&plane_img[im], c->info & 0x4000);
+                    s16 m = l + plane_img[im].w * 4 - 128, e = (c->x >> 6) - ax, f = (c->y >> 6) - ay;
+                    d = 400 - (m < 0 ? -m : m);
+                    if (shown == IMG_WING && (u16)(mirror << 14) == (c->info & 0x4000)
+                        && (e < 0 ? -e : e) + (f < 0 ? -f : f) < 8)
+                        d -= 1000;
                 } else if (im == IMG_O1A1) {       /* the topmost, the one shown kept */
                     s16 e = (c->x >> 6) - ax, f = (c->y >> 6) - ay;
                     d = c->y >> 6;
