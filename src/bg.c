@@ -60,6 +60,7 @@ static u16 sof_key[SOF_SIZE];               /* composite + 1, 0 = free */
 static u8 sof_slot[SOF_SIZE];
 static u16 slot_comp[COMP_SLOTS];
 static u8 slot_ref[COMP_SLOTS];
+static u8 comp_free = COMP_SLOTS;           /* slots with no reference (the pool full: 0) */
 static u8 slot_clock;
 u16 comp_peak, comp_fail;                   /* (stats for tools/uctrace.py) */
 
@@ -154,8 +155,10 @@ static void comp_release(u8 near, u8 far)
         m = bs->near_mix[near * 16 + i];
         if (m && (c = bs->comp[(m - 1) * bs->nfar + fx]) != 0) {
             u8 s = slot_of((c & 0x1FFF) - 1);
-            if (s && slot_ref[s - 1] && !--slot_ref[s - 1])
+            if (s && slot_ref[s - 1] && !--slot_ref[s - 1]) {
                 comp_freed = 1;
+                comp_free++;
+            }
         }
     }
 }
@@ -165,8 +168,13 @@ static u16 comp_get(u16 c)
 {
     u8 s = slot_of(c - 1), n;
     if (s) {
-        slot_ref[s - 1]++;
+        if (!slot_ref[s - 1]++)
+            comp_free--;
         return slot_tile(s - 1);
+    }
+    if (!comp_free || upq_n >= UPQ) {       /* (no scan of a full pool) */
+        comp_fail++;
+        return 0;
     }
     for (n = 0; n < COMP_SLOTS; n++) {
         s = slot_clock;
@@ -175,22 +183,14 @@ static u16 comp_get(u16 c)
         if (!slot_ref[s])
             break;
     }
-    if (slot_ref[s] || upq_n >= UPQ) {
-        comp_fail++;
-        return 0;
-    }
     if (slot_comp[s] != 0xFFFF)
         sof_del(slot_comp[s]);
     slot_comp[s] = c - 1;
     sof_put(c - 1, s + 1);
     slot_ref[s] = 1;
-    {
-        u16 k, used = 0;
-        for (k = 0; k < COMP_SLOTS; k++)
-            used += slot_ref[k] != 0;
-        if (used > comp_peak)
-            comp_peak = used;
-    }
+    comp_free--;
+    if (COMP_SLOTS - comp_free > comp_peak)
+        comp_peak = COMP_SLOTS - comp_free;
     irq_off();
     upq[upq_n].vram = slot_tile(s) * 32;
     upq[upq_n].comp = c - 1;
@@ -312,6 +312,7 @@ static void set_select(u8 st)
         slot_comp[k] = 0xFFFF;
         slot_ref[k] = 0;
     }
+    comp_free = COMP_SLOTS;
     for (k = 0; k < SOF_SIZE; k++)
         sof_key[k] = 0;
     for (k = 0; k < 16 * 8; k++)

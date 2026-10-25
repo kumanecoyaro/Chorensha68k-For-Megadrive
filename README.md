@@ -98,6 +98,7 @@ make XDF=path/to/CH68_110_1.xdf
 | `tools/fixrom.py` | ROM ヘッダとチェックサムの設定 |
 | `tools/mdrun.py` | libretro コア（Genesis Plus GX）でのヘッドレス実行・スクリーンショット |
 | `tools/uctrace.py` | unicorn の 68000 で ROM を実行（ROM 書き込み検出・プロファイル・命令数計測） |
+| `tools/ucprof.py` | uctrace の高速プロファイル版（ブロック単位で計数、関数ごとの割合・1 回あたりのコスト） |
 
 ## 未対応 / 既知の問題
 

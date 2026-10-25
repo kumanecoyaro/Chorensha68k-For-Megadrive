@@ -95,15 +95,23 @@ static const u8 ch_part[6] = { 0, 0, 0, 1, 1, 1 };
 static const u8 ch_off[6] = { 0, 1, 2, 0, 1, 2 };
 
 extern u16 ym_shadow[2][0xA0];       /* (src/sound.c: registers $20..$BF) */
+#define YM_QMAX 1152                /* (src/sound.c QMAX) */
 extern u8 queue[];
 extern u16 qlen;
 u16 ym_flush(void);
 
 /* sound.c's ym_put, inlined (the queue is drained by the VBlank's sound_update) */
+#ifdef TEST_MUSLOG
+u32 mus_cnt[8];                         /* (debug) vblanks, ticks, steps, set_pitch, fm_tl, ym_put, key_on, cmds */
+#define MC(i) (mus_cnt[i]++)
+#else
+#define MC(i)
+#endif
 static inline void ym_put(u8 part, u8 reg, u8 val)
 {
     u8 *q;
-    while (qlen + 3 > 1536)
+    MC(5);
+    while (qlen + 3 > YM_QMAX)
         ym_flush();
     q = &queue[qlen];
     q[0] = part << 1;
@@ -155,26 +163,55 @@ static s16 atten(const MCh *c)
     return (c->atvol >= 0 ? c->atvol : vol_table[c->vol]) + MUSIC_ATT + (duck ? DUCK_ATT : 0);
 }
 
+/* the operators' TL: the carriers get the channel's attenuation.  Written
+ * straight into the queue (it runs for every volume LFO step): only the
+ * carriers can change unless the voice did, and the shadow drops the
+ * levels the registers already hold */
 static void fm_tl(MCh *c, s16 lfo)
 {
     const u8 *v = c->voice;
-    s16 a = atten(c) + lfo;
-    u8 i;
-    if (!v || c->kind == MUTED)
+    s16 a;
+    u8 k, part, r, car, m;
+    u16 *sh;
+    u8 *q;
+    if (!v || (k = c->kind) == MUTED)
         return;
-    if (a == c->lastatt && v == c->lastvoice)
-        return;                         /* registers already hold these levels */
+    a = atten(c) + lfo;
+    car = v[3];
+    if (v == c->lastvoice) {
+        if (a == c->lastatt)
+            return;                     /* registers already hold these levels */
+        m = car;
+    } else {
+        m = 15;
+    }
+    MC(4);
     c->lastatt = a;
     c->lastvoice = v;
-    for (i = 0; i < 4; i++) {
-        s16 tl = v[8 + i];
-        if (v[3] & (1 << i)) {
+    part = ch_part[k];
+    r = 0x40 + ch_off[k];
+    sh = &ym_shadow[part][r - 0x20];
+    part <<= 1;
+    while (qlen + 12 > YM_QMAX)
+        ym_flush();
+    q = &queue[qlen];
+    for (v += 8; m; m >>= 1, car >>= 1, v++, r += 4, sh += 4) {
+        s16 tl;
+        if (!(m & 1))
+            continue;
+        tl = *v;
+        if (car & 1) {
             tl += a;
             if (tl < 0) tl = 0;
             if (tl > 127) tl = 127;
         }
-        fm_reg(c->kind, 0x40 + i * 4, (u8)tl);
+        if (*sh == (u16)tl)
+            continue;
+        *sh = tl;
+        q[0] = part; q[1] = r; q[2] = (u8)tl;
+        q += 3;
     }
+    qlen = q - queue;
 }
 
 static void fm_voice(MCh *c)
@@ -225,6 +262,7 @@ static const u8 div3[36] = {
 
 static void set_pitch(MCh *c)
 {
+    MC(3);
     s16 p = (s16)((c->note + 15) << 6) + c->detune + (s16)shr8(&c->pacc);
     u16 oct, rem;
     if (c->kind == MUTED)
@@ -245,8 +283,15 @@ static void set_pitch(MCh *c)
         if (((blk << 11) | fn) == c->lastfreq)
             return;
         c->lastfreq = (blk << 11) | fn;
-        ym_put(ch_part[c->kind], 0xA4 + ch_off[c->kind], (blk << 3) | (fn >> 8));
-        ym_put(ch_part[c->kind], 0xA0 + ch_off[c->kind], fn & 0xFF);
+        {
+            u8 *q, part = ch_part[c->kind] << 1, r = 0xA0 + ch_off[c->kind];
+            while (qlen + 6 > YM_QMAX)
+                ym_flush();
+            q = &queue[qlen];
+            q[0] = part; q[1] = r + 4; q[2] = (blk << 3) | (fn >> 8);
+            q[3] = part; q[4] = r; q[5] = (u8)fn;
+            qlen += 6;
+        }
     } else if (!c->noise) {
         u16 n = psg_tab[rem] >> oct;
         u8 v = c->kind & 1;
@@ -266,6 +311,7 @@ u8 key_log[6000][4];        /* frame (BE), kind, note */
 
 static void key_on(MCh *c)
 {
+    MC(6);
     c->on = 1;
 #ifdef KEY_LOG
     if (key_log_n < 6000 && c->kind != MUTED) {
@@ -388,6 +434,7 @@ static s16 rd16(const u8 *p)
 static void step(MCh *c)
 {
     u16 guard = 0;
+    MC(2);
     if (c->ended)
         return;
     if (c->wait) {
@@ -396,6 +443,7 @@ static void step(MCh *c)
     }
     while (++guard < 1000) {
         u8 cmd = *c->pos++;
+        MC(7);
         if (cmd <= 0x7F) {                          /* rest */
             key_off(c);
             c->wait = cmd;
@@ -580,6 +628,7 @@ static void step(MCh *c)
 
 static void tick(void)
 {
+    MC(1);
     MCh *c;
     for (c = ch; c < ch + NCH; c++) {   /* (a pointer: no multiply per channel) */
         if (c->wait)                    /* (step's common case, inlined) */
@@ -661,6 +710,7 @@ void music_play(u8 no)
  * frames don't slow the music down */
 void music_update(void)
 {
+    MC(0);
     u16 n = vblank_count - last_vbl;
     last_vbl += n;
     if (!playing)
@@ -683,8 +733,16 @@ void music_update(void)
                 fm_tl(c, c->ma_act ? (s16)shr8(&c->ma.val) : 0);
     }
     {
+        /* the LFOs (vibrato, tremolo) are applied every other VBlank, half
+         * of the channels each time: the TL / frequency writes are the
+         * bulk of the driver's time.  Slides and the drums' sweeps
+         * (waveform + 4) keep the full rate. */
         MCh *c;
+        u8 odd = vblank_count & 1;
         for (c = ch; c < ch + NCH; c++) {
+            odd ^= 1;
+            if (odd && !c->slide && !(c->mp_act && (c->mp.w & 4)))
+                continue;
             if (c->lt) {
                 if (c->mp_act) {
                     s16 v;
