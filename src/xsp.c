@@ -275,14 +275,16 @@ void xsp_call(s16 x, s16 y, u16 id, u16 info);
 static u8 last_ntext;                   /* text sprites at the front of the last table */
 
 extern u8 text_on_plane;                /* (plane.c shows the text rows) */
+extern u8 text_map[28];                 /* screen row r shows text row text_map[r] (x68.c) */
 static void text_sprites(void)
 {
     u8 r, c, n = 0;
     for (r = text_on_plane ? 28 : 1; r < 28; r++) {
-        u32 m = text_row_mask[r];
+        u8 tr = text_map[r];
+        u32 m = text_row_mask[tr];
         for (c = 0; m; c++, m >>= 1)
             if (m & 1) {
-                xsp_call(c * 8, r * 8, 0xC000 | (FONT_TILE_BASE + (text_grid[r][c] & 0x7F)), 63);
+                xsp_call(c * 8, r * 8, 0xC000 | (FONT_TILE_BASE + (text_grid[tr][c] & 0x7F)), 63);
                 n++;
             }
     }
@@ -300,16 +302,15 @@ static u8 base_n, base_valid;
 void xsp_text_refresh(void)
 {
     u8 r, c, n = 0, rest, i;
-    if (!base_valid) {
-        if (last_ntext > ntable)
-            last_ntext = ntable;
-        base_n = ntable - last_ntext;
-        for (i = 0; i < base_n; i++)
-            BASE[i] = table[last_ntext + i];
+    if (!base_valid) {                  /* the last table's sprites but the text (high priority) */
+        base_n = 0;
+        for (i = 0; i < ntable; i++)
+            if (!(table[i].attr & 0x8000) && (table[i].y || table[i].x != 1))
+                BASE[base_n++] = table[i];
         base_valid = 1;
     }
     for (r = text_on_plane ? 28 : 1; r < 28; r++) {
-        u32 m = text_row_mask[r];
+        u32 m = text_row_mask[text_map[r]];
         for (; m; m &= m - 1)
             n++;
     }
@@ -322,12 +323,13 @@ void xsp_text_refresh(void)
         table[n + i] = BASE[i];
     i = 0;
     for (r = 1; r < 28 && i < n; r++) {
-        u32 m = text_row_mask[r];
+        u8 tr = text_map[r];
+        u32 m = text_row_mask[tr];
         for (c = 0; m && i < n; c++, m >>= 1)
             if (m & 1) {
                 table[i].y = r * 8 + 128;
                 table[i].size = 0;      /* 1x1 */
-                table[i].attr = 0x8000 | (TEXT_PAL << 13) | (FONT_TILE_BASE + (text_grid[r][c] & 0x7F));
+                table[i].attr = 0x8000 | (TEXT_PAL << 13) | (FONT_TILE_BASE + (text_grid[tr][c] & 0x7F));
                 table[i].x = c * 8 + 128;
                 i++;
             }

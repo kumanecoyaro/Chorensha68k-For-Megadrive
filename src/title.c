@@ -29,6 +29,7 @@ long x_bgm_play(long no);
 long x_joybtn(long port);
 long x_joydir(long port);
 void xsp_call(s16 x, s16 y, u16 id, u16 info);
+void text_map_set(u8 kind);
 
 #define ROW0   17                       /* first menu row (text rows of 8 lines) */
 #define CURSOR 5                        /* the original's cursor character */
@@ -74,6 +75,25 @@ static void logo_slide(void)
     }
 }
 
+/* left alone on the menu: the ranking (as fn_02dac: after $180 frames,
+ * fn_011ce at row 10, for $100 frames or until a button / direction) */
+static u8 pad_edge(u8 *last);
+static u8 pad_now_any(u8 *last) { return pad_edge(last) != 0; }
+#define IDLE_RANKING 0x180
+static void show_ranking(u8 *last)
+{
+    u16 t;
+    x_text_clear();
+    text_map_set(2);                    /* (rows 5-28: one row up) */
+    ocall(OFN(0x011ce), 0, 10, 0, 0);
+    for (t = 0; t < 0x100; t++) {
+        x_wait(0);
+        if (pad_now_any(last))
+            break;
+    }
+    text_map_set(0);
+}
+
 static u8 pad_edge(u8 *last)
 {
     u8 now = (x_joybtn(1) ? 0x10 : 0), d = x_joydir(1), e;
@@ -89,6 +109,7 @@ static u8 pad_edge(u8 *last)
 long x_title_menu(void)
 {
     u8 row, last = 0xFF, e;
+    u16 idle = 0;
     x_bgm_play(0x10);
     x_text_clear();
     x_xsp_out0();
@@ -103,6 +124,15 @@ long x_title_menu(void)
     for (;;) {
         x_wait(0);
         e = pad_edge(&last);
+        if (last)
+            idle = 0;
+        else if (++idle >= IDLE_RANKING) {
+            show_ranking(&last);
+            draw_menu();
+            draw_cursor(row, 1);
+            idle = 0;
+            continue;
+        }
         if (e & 3) {
             draw_cursor(row, 0);
             row = (row + (e & 1 ? 3 : 1)) & 3;

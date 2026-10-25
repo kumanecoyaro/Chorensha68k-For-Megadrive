@@ -8,6 +8,7 @@
 _Static_assert(ORIG_RAM + ORIG_RAM_SIZE <= 0xFF9C00, "original RAM overlaps the port's");
 
 long ocall(void *fn, long a1, long a2, long a3, long a4);
+void text_map_set(u8 kind);
 long x_bg_load(void);
 long x_text_clear(void);
 void plane_upload(void);
@@ -97,6 +98,7 @@ int main(void)
     vdp_load_tiles(1, bg_tiles, BG_TILE_COUNT - 1);
     sound_init();
     xsp_init();
+    text_map_set(0);
     vdp_display(1);
     __asm__ volatile("move.w #0x2500, %sr");
 

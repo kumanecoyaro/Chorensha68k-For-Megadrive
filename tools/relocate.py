@@ -103,8 +103,16 @@ HOOKS = [
     (0x03872, 'x_bgm_fade', 'c'),
     (0x03882, 'x_nop', 'c'),
     (0x035ec, 'x_nop', 'c'),
-    # game over / name entry, title
+    # game over: ranking / name entry (the original, src/hooks.s orig_0132c; its
+    # graphic screen boxes and VBlank count wait do nothing here), title
     (0x0132c, 'x_game_over', 'c'),
+    (0x39764, 'x_nop', 'c'),            # (CRTC / graphic screen)
+    (0x39816, 'x_nop', 'c'),            # IOCS $B1 APAGE
+    (0x39820, 'x_nop', 'c'),            # IOCS $B4 WINDOW
+    (0x39834, 'x_nop', 'c'),            # IOCS $BA FILL
+    (0x39852, 'x_nop', 'c'),            # IOCS $B5 WIPE
+    (0x2cbb8, 'x_nop', 'c'),            # XSP vsync count wait (x_xsp_out0 paces)
+    (0x01106, 'x_nop', 'c'),            # write ETC_DAT/SCORE.DAT
     (0x02dac, 'x_title_menu', 'c'),     # title menu (src/title.c)
     (0x3966a, 'x_nop', 'c'),            # printf (error messages)
     (0x39750, 'x_nop', 'c'),
@@ -134,6 +142,9 @@ def patches():
         (0x057f0, '6774', '4e71', 'BG: always draw the chip (beq.b L05866 -> nop)'),
         # L03e60: "exit" stays on the title (bne.b L03f5c -> bra.b)
         (0x03f46, '6614', '6014', 'title: exit does not quit'),
+        # fn_0132c: a new first place jumps into the replay saver (L00dba, past
+        # the fn_00c9c hook: file output) -> the normal end instead
+        (0x01fb2, '660002f8', '600002f8', 'ranking: no replay save (bne.w L022ac -> bra.w)'),
         # the bomb's circles (and the player's hit flash): one frame each, no
         # animation, and not the big expl2 frames $B8 / $B9 (96 / 128 px): no new
         # tiles to load every few frames.  D_48ddc: expl3 ring frame ($BA + n)
@@ -238,6 +249,11 @@ def main(xpath, lst, xspdir, out):
     for lo, hi, dst, _ in ram:
         if lo < x.data_end:
             rimg[dst - ORIG_RAM:dst - ORIG_RAM + hi - lo] = img[lo:hi]
+    # the ranking (B_49fb4, 10 x 24 bytes: score, stage, name) as the original
+    # loads it from ETC_DAT/SCORE.DAT at start (not saved: no backup RAM)
+    sd = open(os.path.join(os.path.dirname(xpath), 'ETC_DAT', 'SCORE.DAT'), 'rb').read()
+    a = remap(0x49fb4) - ORIG_RAM
+    rimg[a:a + len(sd)] = sd
 
     pad = rom_blob_base - ORIG_ROM - len(img)
     open(os.path.join(out, 'orig.bin'), 'wb').write(bytes(img) + bytes(pad) + blob)

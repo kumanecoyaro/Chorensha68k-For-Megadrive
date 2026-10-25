@@ -221,8 +221,9 @@ long x_bg_full(void)
 
 /* the original's graphic screen on / off (IOCS $B2, x_screen_clear): off
  * while a stage is being drawn, on when it is complete.  Off, plane B shows
- * plane A's name table instead (empty then: no large enemy yet). */
-static volatile u8 bg_on;
+ * plane A's name table instead, scrolled as plane A (plane_upload): only
+ * plane A's content (text, nothing else then) shows. */
+volatile u8 bg_on;                          /* (plane.c: plane B follows plane A while off) */
 void bg_show(u8 on)
 {
     bg_on = on;

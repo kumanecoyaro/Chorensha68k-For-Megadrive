@@ -43,6 +43,7 @@ extern Call calls[];
 extern u16 ncalls;
 extern u8 pl_ix[];                      /* calls of the refs looked for here (xsp_fast.s) */
 extern u16 pl_n;
+extern volatile u8 bg_on;               /* (bg.c) */
 extern const s16 size_w[16], size_h[16];
 u16 xsp_tile_for(u16 block, u8 pal, u8 mesh, u16 *key);
 void xsp_touch(u16 key);
@@ -271,12 +272,13 @@ extern u32 text_row_mask[32];
 extern u8 text_pl_dirty;
 u8 text_on_plane;                       /* (xsp.c: no text sprites) */
 
+extern u8 text_map[28];                 /* screen row r shows text row text_map[r] (x68.c) */
 static u32 text_rows(void)
 {
     u32 m = 0;
     u8 r;
     for (r = 1; r < 28; r++)
-        if (text_row_mask[r])
+        if (text_row_mask[text_map[r]])
             m |= 1UL << r;
     return m;
 }
@@ -286,9 +288,9 @@ static void write_text(void)
     u8 r, c, pr, half;
     clear_win_rows();
     for (r = 1; r < 28; r++)
-        if (text_row_mask[r]) {
+        if (text_row_mask[text_map[r]]) {
             u16 *d = win[r];
-            const u8 *t = text_grid[r];
+            const u8 *t = text_grid[text_map[r]];
             for (c = 0; c < 32; c++, t++)
                 *d++ = *t ? TEXT_ATTR + (*t & 0x7F) : 0;
             win_nz |= 1UL << r;
@@ -540,6 +542,10 @@ void plane_upload(void)
     wr_n = 0;
     VDP_CTRL32 = VSRAM_W(0);
     VDP_DATA = vs & 511;
+    if (!bg_on)                         /* (plane B shows plane A's table: on top of it) */
+        VDP_DATA = vs & 511;
     VDP_CTRL32 = VRAM_W(VRAM_HSCROLL);
     VDP_DATA = hs;
+    if (!bg_on)
+        VDP_DATA = hs;
 }

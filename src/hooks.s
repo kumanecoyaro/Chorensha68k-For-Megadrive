@@ -26,6 +26,13 @@ orig_05574:
     movem.l %d3-%d7/%a3-%a6, -(%sp)
     jmp     0x10000 + 0x557a
 
+| ---- fn_0132c (game over: ranking / name entry, hooked by x_game_over)
+    .globl  orig_0132c
+orig_0132c:
+    link.w  %a6, #-184
+    movem.l %d3-%d7/%a3-%a5, -(%sp)
+    jmp     0x10000 + 0x1334
+
 | ---- C -> original code.  The original (XC compiled) code may clobber
 | d0-d2/a0-a2; gcc expects d2-d7/a2-a6 preserved.
 | long ocall(void *fn, long a1, long a2, long a3, long a4)

@@ -292,10 +292,34 @@ void bgm_service(void)
 }
 
 /* ------------------------------------------------------------------ misc */
+/* screen row r (1-27) shows text row text_map[r]: the X68000's text screen
+ * has 32 rows, the Mega Drive shows 28 (the score line + 27) */
+u8 text_map[28];
+void text_map_set(u8 kind)
+{
+    u8 r;
+    for (r = 0; r < 28; r++)
+        text_map[r] = r;
+    if (kind == 1) {                    /* ranking / name entry (fn_0132c): rows 1, 4, 6-30 */
+        text_map[2] = 4;
+        for (r = 3; r < 28; r++)
+            text_map[r] = r + 3;
+    } else if (kind == 2) {             /* title ranking (fn_011ce at row 10): rows 2-28 */
+        for (r = 1; r < 28; r++)
+            text_map[r] = r + 1;
+    }
+    text_spr_dirty = text_pl_dirty = 1;
+}
+
+/* fn_0132c(score, stage): the original's ranking and name entry */
+long orig_0132c(void);
 long x_game_over(long score, long stage)
 {
-    (void)score; (void)stage;
-    return 0;
+    long r;
+    text_map_set(1);
+    r = ocall(orig_0132c, score, stage, 0, 0);
+    text_map_set(0);
+    return r;
 }
 
 long x_pal_upload(void)
