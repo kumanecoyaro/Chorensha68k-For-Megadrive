@@ -19,9 +19,10 @@
 #include "spr.h"
 
 #define CACHE_A_BASE  BG_TILE_COUNT   /* VRAM tile of the first 4-tile slot (after the BG tiles) */
-#define CACHE_A_SLOTS 128
+#define CACHE_A_SLOTS 96
 #define CACHE_B_BASE  (CACHE_A_BASE + CACHE_A_SLOTS * 4)
-#define CACHE_B_SLOTS 28            /* (ends at tile 1362: src/plane.c tiles 1364..1523) */
+#define CACHE_B_SLOTS 28            /* (ends at tile 1234: src/plane.c tiles 1234..1535) */
+_Static_assert(CACHE_B_BASE + CACHE_B_SLOTS * 16 <= 1234, "sprite cache overlaps the plane A enemy tiles");
 #define NSLOT (CACHE_A_SLOTS + CACHE_B_SLOTS)
 #define HASH_SIZE 512                   /* open addressing, key = block << 4 | palette */
 #define KEY_EMPTY 0xFFFF

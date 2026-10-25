@@ -159,8 +159,8 @@ h_xobj_set:
     bsr     record
     cmp.w   ncalls, %d4                 | (not recorded: the list is full)
     beq     9f
-    move.w  %d2, %d1                    | refs src/plane.c looks for: effects, the
-    sub.w   #0x0B6, %d1                 | crab, the boss and obj21f -> pl_ix
+    move.w  %d2, %d1                    | refs src/plane.c looks for (effects, large
+    sub.w   #0x0B6, %d1                 | enemies) -> pl_ix
     cmp.w   #0x0BF - 0x0B6, %d1
     bls.s   5f
     move.w  %d2, %d1
@@ -168,10 +168,12 @@ h_xobj_set:
     cmp.w   #0xAAE - 0xAA9, %d1
     bls.s   5f
     move.w  %d2, %d1
-    sub.w   #0xB1E, %d1
-    cmp.w   #0xB29 - 0xB1E, %d1
+    sub.w   #0xB18, %d1                 | obj200 body
+    beq.s   5f
+    sub.w   #0xB1E - 0xB18, %d1         | crab, boss obj204 .. stage 2 boss obj205 core
+    cmp.w   #0xB31 - 0xB1E, %d1
     bls.s   5f
-    sub.w   #0xB79 - 0xB1E, %d1
+    sub.w   #0xB79 - 0xB1E, %d1         | obj21f
     cmp.w   #0xB7A - 0xB79, %d1
     bhi     9f
 5:  move.w  pl_n, %d1

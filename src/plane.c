@@ -2,12 +2,13 @@
  * Plane A: large enemies and big effects (the BG uses plane B only, src/bg.c).
  *
  * Large enemies: the stage 1 boss (obj204) and the crab (obj202, two halves
- * and a centre drawn as three refs) are pre-composited by
+ * and a centre drawn as three refs), obj21f, the stage 2 mid boss (obj200:
+ * body and four arms) and boss (obj205) are pre-composited by
  * tools/convert_sprites.py into tile images (the crab's halves open 0..4 px:
- * images at 0 and 4 px).  At the end of each frame the recorded XSP calls are
+ * images at 0 and 4 px; obj200 with its arms closed, or the body alone).  At the end of each frame the recorded XSP calls are
  * searched for one of them; when its tiles are in VRAM its calls are dropped
  * from the sprite list and plane A shows the image at the same place instead
- * (one enemy at a time: the boss first, else the crab nearest to the one
+ * (one enemy at a time: a boss first, else the one nearest to the one
  * already shown; plane A scrolls to put the image there).
  *
  * Big effects (the player's bomb, the boss's death: expl2 / expl3 / flare
@@ -31,11 +32,16 @@
 #include "vdp.h"
 #include "spr.h"
 
-#define ENEMY_BASE 1364                 /* VRAM tiles 1364..1523 (xsp.c cache ends at 1364) */
+#define ENEMY_BASE 1234                 /* VRAM tiles 1234..1535 (xsp.c cache ends at 1234, plane A at 1536) */
+_Static_assert(ENEMY_BASE + PLANE_MAX_TILES <= VRAM_PLANE_A / 32, "plane A enemy tiles overlap plane A");
 #define EMPTY_REF  REF_EMPTY            /* a dropped call (spr.h: a ref without pieces) */
 #define REF_CRAB   0xB1E                /* obj202: left half, right half, centre */
 #define REF_BOSS   0xB29                /* obj204 */
 #define REF_O21F   0xB79                /* obj21f, $B7A after it fires (images 3, 4) */
+#define REF_O200   0xB18                /* obj200: body, arm $B19 x2, arm $B1A x2 (right ones mirrored) */
+#define REF_O205   0xB2B                /* stage 2 boss obj205: $B2B..$B30 with pods, $B31 core */
+#define IMG_O200   5                    /* obj200 palette 8 arms closed, body alone; palette 7 the same */
+#define IMG_O205   9                    /* core, then $B2B..$B30 */
 #define LOAD_CHUNK 64                   /* tiles per VBlank */
 #define WROWS      29                   /* plane rows on screen (224 lines + fine scroll) */
 
@@ -188,7 +194,12 @@ static u8 put_ref(const Call *cl, s16 top)
  * sprite, over it) */
 static void drop_image_calls(s8 img, Call *c)
 {
-    if (img >= 2) {
+    if ((u8)(img - IMG_O200) < 4) {
+        u8 p = img < IMG_O200 + 2 ? 8 : 7, k;
+        for (k = 0; k < ((img - IMG_O200) & 1 ? 1 : 5); k++)
+            if (pal_of(c + k) == p)
+                c[k].id = EMPTY_REF;
+    } else if (img >= 2) {
         if (pal_of(c) == 7)
             c->id = EMPTY_REF;
     } else {
@@ -354,6 +365,29 @@ static u8 fx_hold(s8 img, s16 best, u16 nfx)
     return 1;
 }
 
+/* obj200 body call c (index i), its four arm calls following: the arms
+ * closed (48 / 56 px out) -> the whole image, else the body alone (the
+ * arms stay sprites); by the body's palette 8 / 7 (flashing: the one shown) */
+static s8 o200_image(const Call *c, u16 i)
+{
+    u8 im, p = pal_of(c);
+    s16 x = c->x, y = c->y;
+    if (p == 8)
+        im = IMG_O200;
+    else if (p == 7)
+        im = IMG_O200 + 2;
+    else if ((u8)(shown - IMG_O200) < 4)    /* (hit flash) */
+        im = IMG_O200 + ((shown - IMG_O200) & 2);
+    else
+        return -1;
+    if (i + 4 < ncalls && c[1].id == REF_O200 + 1 && c[2].id == REF_O200 + 1
+        && c[3].id == REF_O200 + 2 && c[4].id == REF_O200 + 2 && (c[2].info & 0x4000)
+        && c[1].x == x - 48 * 64 && c[2].x == x + 48 * 64 && c[1].y == y - 32 * 64 && c[2].y == c[1].y
+        && c[3].x == x - 56 * 64 && c[4].x == x + 56 * 64 && c[3].y == y + 8 * 64 && c[4].y == c[3].y)
+        return im;
+    return im + 1;
+}
+
 void plane_frame(void)
 {
     s16 best = -1, bd = 0x7FFF, top;
@@ -378,10 +412,11 @@ void plane_frame(void)
             }
             continue;
         }
-        if (img == 2)
+        if (img == 2 || img >= IMG_O205)
             continue;
-        if (id == REF_BOSS) {
-            best = i; img = 2;
+        if (id == REF_BOSS || (u16)(id - REF_O205) <= 6) {      /* a boss: before anything else */
+            best = i;
+            img = id == REF_BOSS ? 2 : id == REF_O205 + 6 ? IMG_O205 : IMG_O205 + 1 + (id - REF_O205);
             boss_seen = 1;
             continue;
         }
@@ -392,10 +427,14 @@ void plane_frame(void)
                 im = ((c->x - c[-2].x) >> 6) <= 2 ? 0 : 1;
             else if ((u16)(id - REF_O21F) <= 1)
                 im = 3 + (id - REF_O21F);
+            else if (id == REF_O200)
+                im = o200_image(c, i);
             if (im >= 0) {
-                /* of two: the one already shown (nearest) */
+                /* of two: the one already shown (nearest), one whose tiles are in VRAM */
                 s16 d = (c->x >> 6) - ax, e = (c->y >> 6) - ay;
                 d = (d < 0 ? -d : d) + (e < 0 ? -e : e);
+                if (plane_img[im].group != loaded)
+                    d += 1000;
                 if (shown < 0 || d < bd) {
                     bd = d; best = i; img = im;
                 }

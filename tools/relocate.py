@@ -61,7 +61,6 @@ HOOKS = [
     (0x2cf3a, 'x_xsp_out', 'c'),
     (0x2cf40, 'x_xsp_out0', 'c'),       # (same without BG scroll: title screen)
     (0x2cf24, 'x_nop', 'c'),            # XSP mode
-    (0x2bc86, 'x_nop', 'c'),
     # input (IOCS _BITSNS / _JOYGET wrappers)
     (0x39dac, 'x_bitsns', 'c'),
     (0x39e16, 'x_joydir', 'c'),

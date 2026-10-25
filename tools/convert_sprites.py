@@ -36,7 +36,7 @@ REF_EXTRA = {'sonic2': [('ele_arc', 0x50)], 'spark': [('debris1', 0xC4)]}
 TEXT_XPAL = 2          # X68000 sprite palette used as the text palette
 # large enemies drawn on plane A (src/plane.c): groups of images (one group's
 # tiles are in VRAM at a time); image = refs (file, index, x offset, object
-# palette) composited in drawing order (later = front)
+# palette[, y offset, H flip]) composited in drawing order (later = front)
 PLANE_GROUPS = [
     [   # obj202 crab: halves 0..4 px apart, as two images (0 and 4 px)
         [('obj202', 0, 0, 6), ('obj202', 1, 0, 6), ('obj202', 2, 0, 5)],
@@ -48,6 +48,23 @@ PLANE_GROUPS = [
     [   # obj21f (two of them after a quickly destroyed crab): $B79, $B7A after it fires
         [('obj21f', 0, 0, 7)],
         [('obj21f', 1, 0, 7)],
+    ],
+    [   # stage 2 mid boss obj200 (type $200, two of them, palettes 8 / 7): body $B18, arms
+        # $B19 / $B1A either side (the right ones mirrored), closed: 48 / 56 px out (the
+        # usual pose); the body alone (the arms moving / open stay sprites)
+        [('obj200', 0, 0, 8), ('obj200', 1, -48, 8, -32), ('obj200', 1, 48, 8, -32, 1),
+         ('obj200', 2, -56, 8, 8), ('obj200', 2, 56, 8, 8, 1)],
+        [('obj200', 0, 0, 8)],
+    ],
+    [
+        [('obj200', 0, 0, 7), ('obj200', 1, -48, 7, -32), ('obj200', 1, 48, 7, -32, 1),
+         ('obj200', 2, -56, 7, 8), ('obj200', 2, 56, 7, 8, 1)],
+        [('obj200', 0, 0, 7)],
+    ],
+    [   # stage 2 boss obj205: core $B31, with its pods $B2B..$B30 (pod animation)
+        [('obj205', 6, 0, 7)],
+        [('obj205', 0, 0, 7)], [('obj205', 1, 0, 7)], [('obj205', 2, 0, 7)],
+        [('obj205', 3, 0, 7)], [('obj205', 4, 0, 7)], [('obj205', 5, 0, 7)],
     ],
 ]
 BOMB_REFS = list(range(0xB6, 0xC0)) + list(range(0xAA9, 0xAAF))   # expl2 / expl3 / flare (src/plane.c is_effect)
@@ -255,7 +272,9 @@ def main(xsp, out):
         gtiles = TileSet(); first = len(pimg)
         for parts in group:
             pix = {}; mdpal = None
-            for rname, ri, dx, objpal in parts:
+            for rname, ri, dx, objpal, *opt in parts:
+                dy = opt[0] if opt else 0
+                hf = len(opt) > 1 and opt[1]
                 frm, off, cnt, base = ref_src[ref_first[rname] + ri]
                 ax = ay = 0
                 for j in range(cnt):
@@ -269,7 +288,10 @@ def main(xsp, out):
                         for x in range(16):
                             v = px[(15 - y if info & 0x8000 else y) * 16 + (15 - x if info & 0x4000 else x)]
                             if v:
-                                pix[(ax - 16 + x + dx, ay - 16 + y)] = lut[xp][v] & 15
+                                X = ax - 16 + x
+                                if hf:          # the ref mirrored (as src/xsp_fast.s: -dx - 16 - w)
+                                    X = -X - 17
+                                pix[(X + dx, ay - 16 + y + dy)] = lut[xp][v] & 15
             xs = [p[0] for p in pix]; ys = [p[1] for p in pix]
             ox, oy = min(xs), min(ys)
             w = (max(xs) - ox) // 8 + 1; h = (max(ys) - oy) // 8 + 1
