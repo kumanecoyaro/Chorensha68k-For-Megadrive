@@ -19,7 +19,7 @@ numberings and stores, pre-expanded in ROM:
     palettes (2 and 3); each X68000 palette gets a slot and a byte LUT
     (2 pixels per byte) that remaps its colours into that slot.
 """
-import os, sys, struct, collections
+import os, math, sys, struct, collections
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from x68gfx import load_pal, pcg16
 
@@ -99,13 +99,14 @@ MERGE_MIN = 1          # refs with more frm entries are composited into blocks o
 # megabytes of ROM, so they keep one hardware sprite per PCG
 VLASER_PCGS = (0x50, 0x59)   # the vertical laser segments, thick / thin: refs VLASER_REF, + 1
 # laser segments the bosses fire at an angle (src/xsp_fast.s h_xsp_set_boss): two of
-# them next to each other as one ref, for the step between segments (second minus
-# first, unflipped) seen in the game +-1 px either way and the reverse order
-# (PAIR_REF + pair_lut[pcg - $50][dy + 16][dx + 16] - 1)
-PAIR_STEP = {0x51: (-3, 15), 0x52: (-6, 14), 0x53: (-8, 13), 0x54: (-11, 11),
-             0x55: (-13, 8), 0x56: (-14, 6), 0x57: (-15, 3), 0x58: (-15, 0)}
-for _t, _k in zip(range(0x5A, 0x60), range(0x51, 0x57)):
-    PAIR_STEP[_t] = PAIR_STEP[_k]   # the thin ones ($59 vertical)
+# them next to each other as one ref, for every step (second minus first, unflipped)
+# 14.5 to 17.5 px long within 11 degrees of the segment's direction (its pixels'
+# principal axis), either way round: the steps seen in the stage 2 / 3 bosses lie
+# within 9.3 degrees, 15 to 17.1 px (PAIR_REF + pair_lut[pcg - $50][dy + 16][dx + 16] - 1;
+# the vertical $50 / $59 are merged by h_xsp_set_main)
+PAIR_PCGS = [p for p in range(0x51, 0x60) if p != 0x59]
+PAIR_DIST = (14.5, 17.5)
+PAIR_ANGLE = 11.0
 # the stage 3 boss's needle streams ($86, palette 1, src/xsp_fast.s h_xsp_set_main):
 # two lanes 8 px apart, the second ~10 px lower (table row 16)
 NEEDLE_PCG = 0x86
@@ -273,9 +274,20 @@ def main(xsp, out):
     vlaser_ref = len(ref_start) - len(VLASER_PCGS)
     pair_ref = len(ref_start)
     pair_lut = [0] * (17 * 33 * 33)
-    steps = [(p, p - 0x50, [((sx + ddx) * sgn, (sy + ddy) * sgn) for ddx in (-1, 0, 1)
-                            for ddy in (-1, 0, 1) for sgn in (1, -1)])
-             for p, (sx, sy) in sorted(PAIR_STEP.items())]
+    def axis(p):
+        px = pcg16(pcg, p)
+        pts = [(i % 16, i // 16) for i, v in enumerate(px) if v]
+        mx = sum(a for a, _ in pts) / len(pts); my = sum(b for _, b in pts) / len(pts)
+        sxx = sum((a - mx) ** 2 for a, _ in pts); syy = sum((b - my) ** 2 for _, b in pts)
+        sxy = sum((a - mx) * (b - my) for a, b in pts)
+        return math.degrees(0.5 * math.atan2(2 * sxy, sxx - syy))
+    steps = []
+    for p in PAIR_PCGS:
+        th = axis(p)
+        offs = [(dx, dy) for dx in range(-16, 17) for dy in range(-16, 17)
+                if PAIR_DIST[0] <= math.hypot(dx, dy) <= PAIR_DIST[1]
+                and abs((math.degrees(math.atan2(dy, dx)) - th + 90) % 180 - 90) <= PAIR_ANGLE]
+        steps.append((p, p - 0x50, offs))
     steps.append((NEEDLE_PCG, 16, [(dx * sgn, dy * sgn) for dx, dy in NEEDLE_STEPS for sgn in (1, -1)]))
     for p, row, offs in steps:
         px = pcg16(pcg, p)
