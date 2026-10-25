@@ -37,6 +37,10 @@
     .set    LASER_HI, 0x5F                  | paired into 32x32 sprites
     .set    PSHOT_PR, 0x3A                  | the player's shots: drawn before the enemy
     .set    PSHOT_TO, 0x3D                  | bullets ($3C) when sprites run short
+    .set    BULLET_PR, 0x3C                 | the enemy bullets: the sprite doubler's
+    .set    DBL_MAX, 16                     | (at most this many bullets in the lower part
+    .set    DBL_A, 96                       | of the screen reuse the slots of bullets above
+    .set    DBL_B, 108                      | line DBL_A: src/xsp.c xsp_upload, the H-int)
     .set    DEBRIS_LO, 0x0B4                | debris.sp (particles): not drawn
     .set    DEBRIS_HI, 0x104
 
@@ -292,6 +296,8 @@ xsp_build:
     moveq   #0, %d7
     move.w  pr_hi, %d0
     move.w  %d0, -(%sp)                 | (sp) = current priority
+    clr.w   dbl_n
+    clr.w   dbl_rn
 1:  move.w  (%sp), %d0
     cmp.w   pr_lo, %d0
     blt     90f
@@ -363,7 +369,7 @@ xsp_build:
     and.w   #511, %d5
     lsl.w   #3, %d5
     cmp.w   0(%a4,%d5.w), %d4
-    bne.s   12f
+    bne     12f
     move.w  %a2, 4(%a4,%d5.w)
     move.w  2(%a4,%d5.w), %d4
 11: add.w   %d2, %d2
@@ -372,7 +378,9 @@ xsp_build:
     and.w   #0xC000, %d3
     lsr.w   #3, %d3                     | flips -> attr bits 11/12
     or.w    %d3, %d4
-    add.w   #128, %d1
+    cmp.w   #BULLET_PR, 2(%sp)
+    beq.s   50f
+51: add.w   #128, %d1
     move.w  %d1, (%a0)+
     addq.w  #1, %d7
     move.w  %d7, %d3
@@ -382,10 +390,41 @@ xsp_build:
     add.w   #128, %d0
     move.w  %d0, (%a0)+
     tst.b   pair_two
-    bne.s   17f
+    bne     17f
     bra     70f
+| an enemy bullet: below line DBL_B into the doubler's list (written over the
+| slots of bullets above line DBL_A by the H-int), above DBL_A: its slot noted
+50: tst.b   pair_two
+    bne.s   51b
+    tst.b   dbl_on
+    beq.s   51b
+    cmp.w   #DBL_B, %d1
+    blt.s   52f
+    move.w  dbl_n, %d3
+    cmp.w   #DBL_MAX, %d3
+    bcc.s   51b
+    addq.w  #1, dbl_n
+    lsl.w   #3, %d3
+    lea     dbl_b, %a1
+    add.w   %d3, %a1
+    add.w   #128, %d1
+    move.w  %d1, (%a1)+
+    move.w  #0x0500, (%a1)+             | (the link: the slot's, src/xsp.c)
+    move.w  %d4, (%a1)+
+    add.w   #128, %d0
+    move.w  %d0, (%a1)
+    bra     70f
+52: cmp.w   #DBL_A - 16, %d1
+    bgt.s   51b
+    move.w  dbl_rn, %d3
+    cmp.w   #DBL_MAX, %d3
+    bcc.s   51b
+    addq.w  #1, dbl_rn
+    lea     dbl_slot, %a1
+    move.b  %d7, 0(%a1,%d3.w)
+    bra     51b
 12: bsr     lookup_slow
-    bne.s   11b
+    bne     11b
     sf      pair_two
     bra     70f
 17: sf      pair_two                    | the second PCG of a pair not composed:
@@ -611,7 +650,25 @@ xsp_build:
     lea     call_next, %a1
     move.b  0(%a1,%d6.w), %d6
     bra     2b
-80: subq.w  #1, (%sp)
+80: cmp.w   #BULLET_PR, (%sp)
+    bne.s   81f
+85: move.w  dbl_rn, %d3                 | more bullets below than slots above: empty
+    cmp.w   dbl_n, %d3                  | entries for them (y 0: off the screen)
+    bcc.s   81f
+    cmp.w   #MAX_HW, %d7
+    bcc.s   81f
+    addq.w  #1, dbl_rn
+    lea     dbl_slot, %a1
+    move.b  %d7, 0(%a1,%d3.w)
+    clr.w   (%a0)+
+    addq.w  #1, %d7
+    move.w  %d7, %d3
+    or.w    #0x0500, %d3
+    move.w  %d3, (%a0)+
+    clr.w   (%a0)+
+    move.w  #1, (%a0)+
+    bra.s   85b
+81: subq.w  #1, (%sp)
     bra     1b
 90: addq.l  #2, %sp
     tst.w   %d7
@@ -772,6 +829,36 @@ pair_put:
     movem.l (%sp)+, %d2-%d7/%a2-%a6
     rts
 
+| Level 4 (H-int at line DBL_A, src/vdp.c register 10): the sprite doubler.
+| The bullets above line DBL_A have been shown: their slots in the sprite
+| table take the bullets below DBL_B (xsp_upload sets act_*; hint_n is the
+| count still to write this frame: the second H-int, line 2 x DBL_A, has
+| nothing to do).  VRAM writes in the active display: 2 entries a line.
+    .globl  _hint
+_hint:
+    tst.w   hint_n
+    bne.s   1f
+    rte
+1:  movem.l %d0-%d1/%a0-%a2, -(%sp)
+    move.w  hint_n, %d0
+    clr.w   hint_n
+    subq.w  #1, %d0
+    lea     act_slot, %a1
+    lea     act_b, %a2
+    lea     0xC00004, %a0
+2:  moveq   #0, %d1
+    move.b  (%a1)+, %d1
+    lsl.w   #3, %d1
+    add.w   #0xD800 & 0x3FFF, %d1       | (VRAM_SPRITES)
+    or.w    #0x4000, %d1
+    move.w  %d1, (%a0)
+    move.w  #0xD800 >> 14, (%a0)
+    move.l  (%a2)+, -4(%a0)
+    move.l  (%a2)+, -4(%a0)
+    dbra    %d0, 2b
+    movem.l (%sp)+, %d0-%d1/%a0-%a2
+    rte
+
 | xsp_route(on) (src/xsp.c xsp_pairs): laser pairs (h_xsp_set_boss) or not
     .globl  xsp_route
 xsp_route:
@@ -801,6 +888,21 @@ pl_ix:       .space 64
 hw_limit:    .word 0
 fx_cap:      .word 0
 pair_two:    .byte 0                    | xsp_build: the pair at hand drawn as two sprites
+    .balign 2
+    .globl  dbl_n, dbl_rn, dbl_slot, dbl_b, dbl_on
+dbl_on:      .byte 0                    | (src/xsp.c: sprites have been running short)
+    .balign 2
+dbl_n:       .word 0                    | the doubler (xsp_build): bullets below DBL_B,
+dbl_rn:      .word 0                    | slots of bullets above DBL_A (and empty ones)
+dbl_b:       .space DBL_MAX * 8
+dbl_slot:    .space DBL_MAX
+    .balign 2
+    .globl  act_n, hint_n, act_slot, act_b, act_a
+act_n:       .word 0                    | the doubler for the frame shown (xsp_upload):
+hint_n:      .word 0                    | entries, still to write (_hint),
+act_b:       .space DBL_MAX * 8         | the bullets below, the ones above (VBlank
+act_a:       .space DBL_MAX * 8         | puts them back when no new table comes),
+act_slot:    .space DBL_MAX             | slots
     .balign 2
 stat_pieces: .long 0
 stat_calls:  .long 0

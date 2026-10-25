@@ -218,7 +218,7 @@ long x_screen_clear(long mode)
         __asm__ volatile("move.w #0x2700, %sr");
         vdp_fill(VRAM_PLANE_A + i * 256, 0, 128);
         vdp_fill(VRAM_PLANE_B + i * 256, 0, 128);
-        __asm__ volatile("move.w #0x2500, %sr");
+        __asm__ volatile("move.w #0x2300, %sr");
     }
     return 0;
 }

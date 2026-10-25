@@ -12,7 +12,7 @@ static const u8 vdp_regs[24] = {
     0x00,
     0x00,                   /* 7: backdrop = pal 0 color 0 */
     0x00, 0x00,
-    0xFF,                   /* 10: HInt counter */
+    96 - 1,                 /* 10: HInt every 96 lines (src/xsp_fast.s DBL_A: the sprite doubler) */
     0x00,                   /* 11: full-screen H/V scroll */
     0x00,                   /* 12: H32, no interlace */
     VRAM_HSCROLL >> 10,     /* 13: hscroll table */

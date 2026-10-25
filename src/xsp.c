@@ -68,6 +68,13 @@ static Upload up[MAX_UP];
 static u8 nup;
 
 static HwSpr table[MAX_HW];
+/* the sprite doubler (src/xsp_fast.s: xsp_build, _hint): bullets below line
+ * DBL_B are written over the slots of bullets above DBL_A in the middle of
+ * the frame (the build's list, the list of the frame shown) */
+extern u16 dbl_n, dbl_rn, act_n;
+extern volatile u16 hint_n;
+extern HwSpr dbl_b[], act_b[], act_a[];
+extern u8 dbl_slot[], act_slot[], dbl_on;
 static u8 ntable, table_ready;
 
 /* ------------------------------------------------------------ VRAM cache */
@@ -580,6 +587,19 @@ void xsp_flush(void)
         n = 1;
     }
     ntable = n;
+    {                                   /* the doubler: as many bullets below as slots above */
+        u8 k;
+        static u8 hold;
+        if (n + dbl_n >= MAX_HW)
+            hold = 60;                  /* the doubler on while the sprites run short */
+        else if (hold)
+            hold--;
+        dbl_on = hold != 0;
+        if (dbl_n > dbl_rn)
+            dbl_n = dbl_rn;
+        for (k = 0; k < dbl_n; k++)
+            dbl_b[k].size = 0x0500 | (table[dbl_slot[k]].size & 0x7F);
+    }
     ncalls = 0;
     pl_n = 0;
     fx_stage = fx_aslots = fx_bslots = 0;
@@ -604,7 +624,23 @@ void xsp_upload(void)
     stage_len = 0;
     rom_len = 0;
     if (table_ready) {
+        u8 k;
         vdp_dma_vram(VRAM_SPRITES, table, ntable * 4);
         table_ready = 0;
+        act_n = dbl_n;                      /* the doubler for this table (the H-int) */
+        for (k = 0; k < act_n; k++) {
+            act_slot[k] = dbl_slot[k];
+            act_b[k] = dbl_b[k];
+            act_a[k] = table[dbl_slot[k]];
+        }
+        vdp_set_reg(0, act_n ? 0x14 : 0x04);    /* H-int on / off */
+    } else if (act_n) {                     /* (no new table: the bullets above back) */
+        u8 k;
+        for (k = 0; k < act_n; k++) {
+            const u16 *w = (const u16 *)&act_a[k];
+            VDP_CTRL32 = VRAM_W(VRAM_SPRITES + act_slot[k] * 8);
+            VDP_DATA = w[0]; VDP_DATA = w[1]; VDP_DATA = w[2]; VDP_DATA = w[3];
+        }
     }
+    hint_n = act_n;
 }

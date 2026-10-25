@@ -89,7 +89,7 @@ long x_bg_load(void)
 }
 
 static void irq_off(void) { __asm__ volatile("move.w #0x2700, %sr"); }
-static void irq_on(void)  { __asm__ volatile("move.w #0x2500, %sr"); }
+static void irq_on(void)  { __asm__ volatile("move.w #0x2300, %sr"); }
 
 /* ------------------------------------------------------------ composites */
 static inline u8 sof_home(u16 c) { return (c ^ (c >> 7)) & (SOF_SIZE - 1); }

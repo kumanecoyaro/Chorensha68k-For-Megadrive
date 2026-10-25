@@ -100,7 +100,7 @@ int main(void)
     xsp_init();
     text_map_set(0);
     vdp_display(1);
-    __asm__ volatile("move.w #0x2500, %sr");
+    __asm__ volatile("move.w #0x2300, %sr");      /* (H-int: the sprite doubler) */
 
     x_bg_load();                            /* fn_053ba (start-up file loading) */
 

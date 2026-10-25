@@ -110,9 +110,6 @@ _halt:
     move.w  #0x2700, %sr
 1:  bra.s   1b
 
-_hint:
-    rte
-
 _vint:
     movem.l %d0-%d1/%a0-%a1, -(%sp)
     addq.w  #1, vblank_count
