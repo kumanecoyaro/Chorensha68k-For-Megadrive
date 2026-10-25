@@ -38,9 +38,9 @@
     .set    PSHOT_PR, 0x3A                  | the player's shots: drawn before the enemy
     .set    PSHOT_TO, 0x3D                  | bullets ($3C) when sprites run short
     .set    BULLET_PR, 0x3C                 | the enemy bullets: the sprite doubler's
-    .set    DBL_MAX, 16                     | (at most this many bullets in the lower part
+    .set    DBL_MAX, 24                     | (at most this many bullets in the lower part
     .set    DBL_A, 96                       | of the screen reuse the slots of bullets above
-    .set    DBL_B, 108                      | line DBL_A: src/xsp.c xsp_upload, the H-int)
+    .set    DBL_B, 112                      | line DBL_A: src/xsp.c xsp_upload, the H-int)
     .set    DEBRIS_LO, 0x0B4                | debris.sp (particles): not drawn
     .set    DEBRIS_HI, 0x104
 
