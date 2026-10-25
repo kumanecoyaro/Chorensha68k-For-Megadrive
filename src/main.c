@@ -26,6 +26,8 @@ static void hud_build(void)
         u8 c = text_grid[0][i];
         hud_line[i] = c ? 0x8000 | (TEXT_PAL << 13) | (FONT_TILE_BASE + (c & 0x7F)) : 0;
     }
+    if (OW(0x4a104) && !text_grid[0][31])   /* invincible (the title's up + START): a mark at the right end */
+        hud_line[31] = 0x8000 | (TEXT_PAL << 13) | (FONT_TILE_BASE + '*');
 }
 
 /* called by the vsync hook at the start of VBlank */

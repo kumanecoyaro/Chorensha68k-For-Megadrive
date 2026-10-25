@@ -10,7 +10,9 @@
  *       CONTINUE
  *       CREDITS                     (the original credits screen)
  *
- * START with up held, the cursor on the difficulty or the stage: invincible
+ * START with up held (or let go at most UP_GRACE frames before), the cursor
+ * on the difficulty or the stage: invincible, "*" at the right end of the
+ * score line
  * (the original's debug option B_4a104, "no death"; START comes before the
  * cursor moving up).  The cursor does not wrap, so up on the difficulty
  * stays put.
@@ -96,6 +98,7 @@ static void logo_slide(void)
 static u8 pad_edge(u8 *last);
 static u8 pad_now_any(u8 *last) { return pad_edge(last) != 0; }
 #define IDLE_RANKING 0x180
+#define UP_GRACE 15                     /* up released at most this many frames before START */
 static void show_ranking(u8 *last)
 {
     u16 t;
@@ -124,7 +127,7 @@ static u8 pad_edge(u8 *last)
 
 long x_title_menu(void)
 {
-    u8 row, last = 0xFF, e;
+    u8 row, last = 0xFF, e, up_age = 0xFF;
     u16 idle = 0;
     x_bgm_play(0x10);
     x_text_clear();
@@ -149,11 +152,18 @@ long x_title_menu(void)
             idle = 0;
             continue;
         }
-        if ((e & 0x20) && row <= 1 && (pad_now & PAD_UP)) {
+        if (pad_now & PAD_UP)
+            up_age = 0;
+        else if (up_age < 0xFF)
+            up_age++;
+        if ((e & 0x20) && row <= 1 && up_age <= UP_GRACE) {
             e = 0x10;                   /* up + START: invincible */
             OW(0x4a104) = 1;
-        } else if (e & 0x30)
+            text_dirty = 1;             /* (the score line shows it: src/main.c hud_build) */
+        } else if (e & 0x30) {
             OW(0x4a104) = 0;
+            text_dirty = 1;
+        }
         if (e & 0x30) {
             e = 0x10;
         } else if (e & 3) {

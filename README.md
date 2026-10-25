@@ -69,7 +69,7 @@ X68000 もメガドライブも CPU は 68000 なので、ゲームロジック�
 | START | ポーズ（タイトルでは A / B / START で決定） |
 
 タイトルメニュー: 難易度（EASY / NORMAL / HARD、左右）、STAGE（開始面 1〜4、左右）、CONTINUE、CREDITS。
-難易度か STAGE の行で **上を押しながら START** で無敵（原作のデバッグオプション「死なない」）。
+難易度か STAGE の行で **上を押しながら START** で無敵（原作のデバッグオプション「死なない」。上は START の 15 フレーム前まで離していてよい）。有効なときはスコア行の右端に `*` が出る。
 
 ## ビルド
 
@@ -94,7 +94,7 @@ make XDF=path/to/CH68_110_1.xdf
 | `tools/z80_pcm_driver.py` | Z80 ドライバ生成（DAC 再生 + YM2612 書き込みキュー） |
 | `tools/mdx.py`, `tools/convert_bgm.py` | MDX 解析 / チャンネル割り当て・音程表の生成 |
 | `tools/rom_budget.py` | ROM サイズ集計 |
-| `tools/build_variant.sh` | デバッグ用ビルド（`-DTEST_MUTEKI` 無敵, `-DFRAME_PROBE` 処理時間計測, `-DPLANE_ONLY` プレーンAだけ表示, `-DTEST_CRAB_HP1` 1 面の蟹が一撃で死ぬ（obj21f の確認用）, `-DTEST_STAGE=2` タイトルの開始面の初期値, `-DTEST_KEYLOG` CPU 変換したスプライトのキーを記録, `-DTEST_BGLOG` 描いたチップを記録, `-DTEST_FAILLOG` スプライトのタイル読み込み失敗を記録, `-DZ80_PEEK` ほか） |
+| `tools/build_variant.sh` | デバッグ用ビルド（`-DTEST_MUTEKI` 無敵, `-DFRAME_PROBE` 処理時間計測, `-DPLANE_ONLY` プレーンAだけ表示, `-DTEST_CRAB_HP1` 1 面の蟹が一撃で死ぬ（obj21f の確認用）, `-DTEST_STAGE=2` タイトルの開始面の初期値, `-DTEST_PLCHK` 自機がスプライト表にあるかを毎フレーム検査, `-DTEST_KEYLOG` CPU 変換したスプライトのキーを記録, `-DTEST_BGLOG` 描いたチップを記録, `-DTEST_FAILLOG` スプライトのタイル読み込み失敗を記録, `-DZ80_PEEK` ほか） |
 | `tools/fixrom.py` | ROM ヘッダとチェックサムの設定 |
 | `tools/mdrun.py` | libretro コア（Genesis Plus GX）でのヘッドレス実行・スクリーンショット |
 | `tools/uctrace.py` | unicorn の 68000 で ROM を実行（ROM 書き込み検出・プロファイル・命令数計測） |
