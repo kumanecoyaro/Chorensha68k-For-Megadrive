@@ -441,9 +441,9 @@ void xsp_cache_layout(u16 bg_end)
 
 /* refs src/plane.c looks for, a bit per ref: effects (expl2 / expl3 $B6-$BF,
  * flare $AA9-$AAE) and the large enemies (obj1a0 centre $B16, obj200 body $B18, crab .. obj205
- * core $B1E-$B31, obj207 $B34-$B3D, obj20A $B43, obj21f $B79-$B7A); xobj_set notes their
+ * core $B1E-$B31, obj207 $B34-$B3D, obj20A wing $B44, obj21f $B79-$B7A); xobj_set notes their
  * calls in pl_ix */
-const u8 pl_refmap[(NREF + 7) / 8] = { [22] = 0xc0, [23] = 0xff, [341] = 0x7e, [354] = 0x40, [355] = 0xc1, [356] = 0xff, [357] = 0xff, [358] = 0xf3, [359] = 0x3f, [360] = 0x08, [367] = 0x06 };
+const u8 pl_refmap[(NREF + 7) / 8] = { [22] = 0xc0, [23] = 0xff, [341] = 0x7e, [354] = 0x40, [355] = 0xc1, [356] = 0xff, [357] = 0xff, [358] = 0xf3, [359] = 0x3f, [360] = 0x10, [367] = 0x06 };
 
 void xsp_init(void)
 {

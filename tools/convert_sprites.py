@@ -79,10 +79,9 @@ PLANE_GROUPS = [
         # mirrored) 28 px out, 12 px up, centre $B16, palette 6: the pods fully out
         [('obj1a0', 2, -28, 6, -12), ('obj1a0', 2, 28, 6, -12, 1), ('obj1a0', 1, 0, 6)],
     ],
-    [   # stage 4 battleship type $20A (obj20A): centre $B43, halves $B44 128 px either side
-        # (the right one mirrored), 24 px up, palette 6: 512 x 96 px (src/plane.c: wider
-        # than the plane, only the columns on screen are written)
-        [('obj20A', 0, 0, 6), ('obj20A', 1, -128, 6, -24), ('obj20A', 1, 128, 6, -24, 1)],
+    [   # stage 4 battleship type $20A (obj20A): a wing $B44 (256 x 80 px, palette 6); the
+        # right one (mirrored) is the same image written mirrored (src/plane.c mirror)
+        [('obj20A', 1, 0, 6)],
     ],
 ]
 BOMB_REFS = list(range(0xB6, 0xC0)) + list(range(0xAA9, 0xAAF))   # expl2 / expl3 / flare (src/plane.c is_effect)
