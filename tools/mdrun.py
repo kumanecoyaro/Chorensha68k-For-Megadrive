@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Headless Mega Drive test runner using a libretro core (e.g. Genesis Plus GX).
 
-usage: mdrun.py CORE.so ROM.bin FRAMES OUTPREFIX [--shot N,N,...] [--input SCRIPT] [--wav] [--dump N,N,...]
+usage: mdrun.py CORE.so ROM.bin FRAMES OUTPREFIX [--shot N,N,...] [--input SCRIPT] [--wav] [--dump N,N,...] [--state FILE]
                  [--opt key=value]   (e.g. genesis_plus_gx_ym2612=nuked (ym2612))
 
 SCRIPT is a comma-separated list of  start-end:BUTTONS  entries, e.g.
@@ -36,7 +36,7 @@ STATE_CB = C.CFUNCTYPE(C.c_int16, C.c_uint, C.c_uint, C.c_uint, C.c_uint)
 
 def main():
     core, rom, frames, prefix = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
-    shots = set(); dumps = set(); script = []; audio = None; opts = {}
+    shots = set(); dumps = set(); script = []; audio = None; opts = {}; state_file = None
     args = sys.argv[5:]
     while args:
         a = args.pop(0)
@@ -47,6 +47,8 @@ def main():
             opts[k.encode()] = C.c_char_p(v.encode())
         elif a == '--dump':                    # RAM / VRAM (if the core has it) at these frames
             dumps = {int(v) for v in args.pop(0).split(',')}
+        elif a == '--state':                   # load a core save state (retro_unserialize) first
+            state_file = args.pop(0)
         elif a == '--wav':
             audio = bytearray()
         elif a == '--input':
@@ -113,6 +115,13 @@ def main():
     gi = GameInfo(os.path.abspath(rom).encode(), C.cast(buf, C.c_void_p), len(data), None)
     if not lib.retro_load_game(C.byref(gi)):
         sys.exit('load failed')
+    if state_file:
+        lib.retro_serialize_size.restype = C.c_size_t
+        sd = open(state_file, 'rb').read()
+        print('state', len(sd), 'core size', lib.retro_serialize_size())
+        sb = C.create_string_buffer(sd, len(sd))
+        if not lib.retro_unserialize(sb, C.c_size_t(len(sd))):
+            sys.exit('unserialize failed')
     lib.retro_get_memory_data.restype = C.c_void_p
     lib.retro_get_memory_size.restype = C.c_size_t
 

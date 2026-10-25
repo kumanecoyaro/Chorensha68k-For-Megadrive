@@ -192,14 +192,19 @@ static u8 put_ref(const Call *cl, s16 top)
 
 /* the calls shown by the plane image are dropped (a flashing part stays a
  * sprite, over it) */
+static u8 o200_arms(const Call *c, u16 i, u16 *a);
 static void drop_image_calls(s8 img, Call *c)
 {
 
     if ((u8)(img - IMG_O200) < 4) {
         u8 p = img < IMG_O200 + 2 ? 8 : 7, k;
-        for (k = 0; k < ((img - IMG_O200) & 1 ? 1 : 5); k++)
-            if (pal_of(c + k) == p)
-                c[k].id = EMPTY_REF;
+        u16 a[4];
+        if (pal_of(c) == p)
+            c->id = EMPTY_REF;
+        if (!((img - IMG_O200) & 1) && o200_arms(c, c - calls, a))
+            for (k = 0; k < 4; k++)
+                if (pal_of(&calls[a[k]]) == p)
+                    calls[a[k]].id = EMPTY_REF;
     } else if (img >= 2) {
         if (pal_of(c) == 7)
             c->id = EMPTY_REF;
@@ -366,13 +371,34 @@ static u8 fx_hold(s8 img, s16 best, u16 nfx)
     return 1;
 }
 
-/* obj200 body call c (index i), its four arm calls following: the arms
- * closed (48 / 56 px out) -> the whole image, else the body alone (the
- * arms stay sprites); by the body's palette 8 / 7 (flashing: the one shown) */
+/* obj200 body call c (index i): its four arm calls follow (the charging
+ * shots $B5 it draws may come in between) -> their indices in a[], 1 if
+ * they are there with the arms closed (48 / 56 px out) */
+#define REF_SHOT   0xB5
+static u8 o200_arms(const Call *c, u16 i, u16 *a)
+{
+    static const u16 want[4] = { REF_O200 + 1, REF_O200 + 1, REF_O200 + 2, REF_O200 + 2 };
+    static const s8 dx[4] = { -48, 48, -56, 56 }, dy[4] = { -32, -32, 8, 8 };
+    u16 j = i + 1;
+    u8 k;
+    for (k = 0; k < 4; k++, j++) {
+        while (j < ncalls && calls[j].id == REF_SHOT && j < i + 8)
+            j++;
+        if (j >= ncalls || calls[j].id != want[k] || calls[j].x != c->x + dx[k] * 64
+            || calls[j].y != c->y + dy[k] * 64)
+            return 0;
+        a[k] = j;
+    }
+    return 1;
+}
+
+/* obj200 body call c: the whole image with the arms closed, else the body
+ * alone (the arms stay sprites); by the body's palette 8 / 7 (flashing: the
+ * one shown) */
 static s8 o200_image(const Call *c, u16 i)
 {
     u8 im, p = pal_of(c);
-    s16 x = c->x, y = c->y;
+    u16 a[4];
     if (p == 8)
         im = IMG_O200;
     else if (p == 7)
@@ -381,12 +407,15 @@ static s8 o200_image(const Call *c, u16 i)
         im = IMG_O200 + ((shown - IMG_O200) & 2);
     else
         return -1;
-    if (i + 4 < ncalls && c[1].id == REF_O200 + 1 && c[2].id == REF_O200 + 1
-        && c[3].id == REF_O200 + 2 && c[4].id == REF_O200 + 2 && (c[2].info & 0x4000)
-        && c[1].x == x - 48 * 64 && c[2].x == x + 48 * 64 && c[1].y == y - 32 * 64 && c[2].y == c[1].y
-        && c[3].x == x - 56 * 64 && c[4].x == x + 56 * 64 && c[3].y == y + 8 * 64 && c[4].y == c[3].y)
-        return im;
-    return im + 1;
+    return o200_arms(c, i, a) ? im : im + 1;
+}
+
+/* the image would show (some of it) on screen */
+static u8 on_screen(const Call *c, s8 img)
+{
+    const PlaneImg *im = &plane_img[img];
+    s16 x = (c->x >> 6) + im->ox, y = (c->y >> 6) + im->oy;
+    return x < 256 && x + im->w * 8 > 0 && y < 224 && y + im->h * 8 > 0;
 }
 
 void plane_frame(void)
@@ -430,6 +459,8 @@ void plane_frame(void)
                 im = 3 + (id - REF_O21F);
             else if (id == REF_O200)
                 im = o200_image(c, i);
+            if (im >= 0 && !on_screen(c, im))
+                im = -1;                    /* (off screen: nothing to gain) */
             if (im >= 0) {
                 /* of several: one whose tiles are in VRAM (or coming in), then the
                  * one nearest to the one shown: no switching back and forth
@@ -569,14 +600,18 @@ void plane_reset(void)
 }
 
 /* DMA must not cross a 128 KB boundary of the source */
+/* VDP DMA can't cross a 128 KB boundary of the source: split there (byte
+ * arithmetic: the source need not be long-aligned, and an odd number of words
+ * before the boundary used to shift the second part by a word) */
 void dma_rom(u16 vram, const u32 *src, u16 words)
 {
-    u32 a = (u32)src, room = (0x20000 - (a & 0x1FFFF)) >> 1;
+    const u8 *s = (const u8 *)src;
+    u32 room = (0x20000 - ((u32)s & 0x1FFFF)) >> 1;
     if (words > room) {
-        vdp_dma_vram(vram, src, room);
-        vram += room * 2; src += room / 2; words -= room;
+        vdp_dma_vram(vram, s, room);
+        vram += room * 2; s += room * 2; words -= room;
     }
-    vdp_dma_vram(vram, src, words);
+    vdp_dma_vram(vram, s, words);
 }
 
 /* VBlank: tile loading, plane rows, scroll */
