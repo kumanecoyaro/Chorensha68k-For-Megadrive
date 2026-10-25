@@ -49,6 +49,7 @@ static s8 far_d;                            /* far row - near row */
 static u8 last_p = 0xFF;
 
 /* composite tile pool */
+void xsp_cache_layout(u16 bg_end);
 static const BgSet *bs = &bg_sets[0];
 static u8 bs_stage = 1;                     /* stage of the set in use */
 static volatile u8 bs_pending;              /* VBlank: upload the set's tiles and palettes */
@@ -79,6 +80,7 @@ long x_bg_load(void)
         slot_comp[l] = 0xFFFF;
     for (l = 0; l < 16 * 8; l++)
         (&cell_far[0][0])[l] = 0xFF;        /* (no far chip: nothing to release) */
+    xsp_cache_layout(1 + bs->ntiles);
     return 0;
 }
 
@@ -247,6 +249,7 @@ static void set_select(u8 st)
         slot_of[k] = 0;
     for (k = 0; k < 16 * 8; k++)
         (&cell_far[0][0])[k] = 0xFF;        /* (nothing to release) */
+    xsp_cache_layout(1 + bs->ntiles);       /* the sprite cache follows the set's tiles */
 }
 
 /* every near cell merged again over the far layer in place */

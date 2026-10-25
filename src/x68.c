@@ -146,11 +146,41 @@ long x_vsync(long n)
     return waited;
 }
 
+/* frame skip: game frame k is due at VBlank sched.  When the game falls two
+ * VBlanks behind, one frame's sprites (and plane A, scroll) are not built:
+ * the screen keeps the last frame for one more VBlank and the game catches
+ * up (SKIP_MAX in a row at most; past 4 VBlanks behind the debt is
+ * forgiven: the game slows down instead) */
+#ifndef SKIP_MAX
+#define SKIP_MAX 2                  /* frames skipped in a row at most (20 fps at worst) */
+#endif
+static u16 sched;
+static u8 skipped;
+u16 frames_skipped;
+void xsp_skip(void);
+
 /* fn_2cf3a: XSP display list done; p -> {x0, x1, y0, y1} BG scroll (24.8) */
 long x_xsp_out(long p)
 {
     const volatile s32 *s = (const volatile s32 *)p;
+    s16 debt = (s16)(vblank_count - sched);
     PROBE(1);
+    if (debt < 0)
+        debt = 0, sched = vblank_count;
+    else if (debt > 4)
+        debt = 4, sched = vblank_count - 4;
+    sched++;
+    if (debt >= 2 && skipped < SKIP_MAX) {
+        skipped++;
+        frames_skipped++;
+        xsp_skip();
+        PROBE(2);
+#ifdef FRAME_PROBE
+        probe_n++;
+#endif
+        return 1;
+    }
+    skipped = 0;
     while (frame_ready)             /* the last frame is still waiting for its VBlank */
         ;
     xsp_flush();

@@ -194,6 +194,7 @@ static u8 put_ref(const Call *cl, s16 top)
  * sprite, over it) */
 static void drop_image_calls(s8 img, Call *c)
 {
+
     if ((u8)(img - IMG_O200) < 4) {
         u8 p = img < IMG_O200 + 2 ? 8 : 7, k;
         for (k = 0; k < ((img - IMG_O200) & 1 ? 1 : 5); k++)
@@ -546,6 +547,11 @@ void plane_frame(void)
 }
 
 /* x_screen_clear: plane A is being cleared */
+void plane_fx_forget(void)
+{
+    held_ok = 0;
+}
+
 void plane_reset(void)
 {
     u16 *w = &win[0][0], i;

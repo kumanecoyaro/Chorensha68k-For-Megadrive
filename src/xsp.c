@@ -18,12 +18,15 @@
 #include "vdp.h"
 #include "spr.h"
 
-#define CACHE_A_BASE  BG_TILE_COUNT   /* VRAM tile of the first 4-tile slot (after the BG tiles) */
-#define CACHE_A_SLOTS 96
-#define CACHE_B_BASE  (CACHE_A_BASE + CACHE_A_SLOTS * 4)
-#define CACHE_B_SLOTS 28            /* (ends at tile 1234: src/plane.c tiles 1234..1535) */
-_Static_assert(CACHE_B_BASE + CACHE_B_SLOTS * 16 <= 1234, "sprite cache overlaps the plane A enemy tiles");
-#define NSLOT (CACHE_A_SLOTS + CACHE_B_SLOTS)
+/* VRAM: the stage's BG tiles (1..), the 4-tile slots, the 16-tile slots up
+ * to tile 1234 (src/plane.c: the large enemy images 1234..1535).  The 4-tile
+ * slots take whatever the BG set in use leaves (xsp_cache_layout): stage 1
+ * 159, stage 2 113 */
+#define CACHE_A_MAX   160
+#define CACHE_B_SLOTS 28
+#define CACHE_B_BASE  (1234 - CACHE_B_SLOTS * 16)
+#define NSLOT (CACHE_A_MAX + CACHE_B_SLOTS)
+static u16 cache_a_base = BG_TILE_COUNT, cache_a_n = (CACHE_B_BASE - BG_TILE_COUNT) / 4;
 #define HASH_SIZE 512                   /* open addressing, key = block << 4 | palette */
 #define KEY_EMPTY 0xFFFF
 #define NO_ENTRY  0xFFFF
@@ -73,7 +76,7 @@ static inline u16 hslot(u16 key)
 
 static u16 slot_tile(u16 s)
 {
-    return s < CACHE_A_SLOTS ? CACHE_A_BASE + s * 4 : CACHE_B_BASE + (s - CACHE_A_SLOTS) * 16;
+    return s < CACHE_A_MAX ? cache_a_base + s * 4 : CACHE_B_BASE + (s - CACHE_A_MAX) * 16;
 }
 
 /* remove entry h (linear probing, backward-shift deletion: no tombstones) */
@@ -130,7 +133,11 @@ u16 cache_miss(u16 key)
             rom = (mesh ? mesh_off : pre_off)[lo];
     }
 #ifdef TEST_KEYLOG
+#ifdef TEST_KEYLOG_ALL
+    if (1)
+#else
     if (rom < 0 && !mesh)                   /* (debug) CPU-converted keys, read from RAM dumps */
+#endif
         keylog[keylog_n++ & 255] = key;
 #endif
     if (nup >= MAX_UP || (rom >= 0 ? rom_len + n * 32 > ROM_BYTES : stage_len + n * 32 > STAGE_BYTES)) {
@@ -150,9 +157,9 @@ u16 cache_miss(u16 key)
             return 0;               /* (found full already this frame) */
         }
         if (!big) {
-            clk = &clock_a; start = 0; i = CACHE_A_SLOTS;
+            clk = &clock_a; start = 0; i = cache_a_n;
         } else {
-            clk = &clock_b; start = CACHE_A_SLOTS; i = CACHE_B_SLOTS;
+            clk = &clock_b; start = CACHE_A_MAX; i = CACHE_B_SLOTS;
         }
         /* clock replacement: the next slot not used by the frame being built
          * (an effect, loaded before the sprites: nor by the last frame, so
@@ -160,7 +167,7 @@ u16 cache_miss(u16 key)
         for (;;) {
             u16 st;
             s = start + *clk;
-            if (++*clk >= (big ? CACHE_B_SLOTS : CACHE_A_SLOTS))
+            if (++*clk >= (big ? CACHE_B_SLOTS : cache_a_n))
                 *clk = 0;
             if (slot_ent[s] == NO_ENTRY)
                 break;
@@ -225,7 +232,7 @@ u16 cache_miss(u16 key)
 #ifndef FX_ROM_MAX
 #define FX_ROM_MAX   3072               /* the meshed bomb: DMA from ROM, no conversion */
 #endif
-#define FX_ASLOTS    40                 /* (of 96: the boss's death with the player and bullets) */
+#define FX_ASLOTS    48                 /* (of 113 / 159: the boss's death with the player and bullets) */
 #define FX_BSLOTS    12
 static u16 fx_stage, fx_aslots, fx_bslots;
 u16 xsp_tile_for(u16 block, u8 pal, u8 mesh, u16 *keyp)
@@ -287,6 +294,29 @@ void xsp_touch(u16 key)
 /* ------------------------------------------------------------ sprite list */
 const s16 size_w[16] = { 8, 8, 8, 8, 16, 16, 16, 16, 24, 24, 24, 24, 32, 32, 32, 32 };
 const s16 size_h[16] = { 8, 16, 24, 32, 8, 16, 24, 32, 8, 16, 24, 32, 8, 16, 24, 32 };
+
+/* the BG set in use takes VRAM tiles 1..bg_end - 1: the 4-tile slots start
+ * there; every cached block is dropped (src/bg.c, between two frames) */
+void plane_fx_forget(void);
+void xsp_cache_layout(u16 bg_end)
+{
+    u16 i;
+    if (bg_end < 1)
+        bg_end = 1;
+    cache_a_base = bg_end;
+    cache_a_n = (CACHE_B_BASE - bg_end) / 4;
+    if (cache_a_n > CACHE_A_MAX)
+        cache_a_n = CACHE_A_MAX;
+    clock_a = clock_b = 0;
+    full_frame[0] = full_frame[1] = 0xFFFF;
+    for (i = 0; i < NSLOT; i++)
+        slot_ent[i] = NO_ENTRY;
+    for (i = 0; i < HASH_SIZE; i++)
+        htab[i].key = KEY_EMPTY;
+    for (i = 0; i < MESH_MAX; i++)
+        mesh_blk[i] = 0;
+    plane_fx_forget();                      /* (its held effect cells use cached tiles) */
+}
 
 void xsp_init(void)
 {
@@ -394,6 +424,7 @@ extern u16 pl_n;
 
 #ifdef FRAME_PROBE
 u16 fprobe[32][4];                          /* plane_frame / text_sprites / xsp_build */
+u16 fstat[32][4];                           /* CPU-converted bytes, ROM bytes, calls, sprites */
 extern u8 probe_n;
 u16 stamp(void);
 #endif
@@ -415,6 +446,10 @@ void xsp_flush(void)
     n = xsp_build(table);
 #ifdef FRAME_PROBE
     fp[3] = stamp();
+    {
+        u16 *fs = fstat[probe_n & 31];
+        fs[0] = stage_len; fs[1] = rom_len; fs[2] = ncalls; fs[3] = n;
+    }
 #endif
     if (!n) {
         table[0].y = 0; table[0].size = 0; table[0].attr = 0; table[0].x = 1;
@@ -428,6 +463,17 @@ void xsp_flush(void)
     pr_lo = 64; pr_hi = 0;
     table_ready = 1;
     xframe++;
+}
+
+/* a skipped frame (x_xsp_out): its calls are dropped, nothing is built */
+void xsp_skip(void)
+{
+    u16 p;
+    for (p = pr_lo; p <= pr_hi && p < 66; p++)
+        bhead[p] = 0xFF;
+    ncalls = 0;
+    pl_n = 0;
+    pr_lo = 64; pr_hi = 0;
 }
 
 void dma_rom(u16 vram, const u32 *src, u16 words);
