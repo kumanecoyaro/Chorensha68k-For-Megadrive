@@ -21,9 +21,11 @@
 /* VRAM: the stage's BG tiles (1..), the 4-tile slots, the 16-tile slots up
  * to tile 1234 (src/plane.c: the large enemy images 1234..1535).  The 4-tile
  * slots take whatever the BG set in use leaves (xsp_cache_layout): stage 1
- * 159, stage 2 113 */
+ * 121, stage 2 65 */
 #define CACHE_A_MAX   160
-#define CACHE_B_SLOTS 28
+#ifndef CACHE_B_SLOTS
+#define CACHE_B_SLOTS 40            /* (28 thrashed with stage 2's mid boss: 16-tile blocks) */
+#endif
 #define CACHE_B_BASE  (1234 - CACHE_B_SLOTS * 16)
 #define NSLOT (CACHE_A_MAX + CACHE_B_SLOTS)
 static u16 cache_a_base = BG_TILE_COUNT, cache_a_n = (CACHE_B_BASE - BG_TILE_COUNT) / 4;
@@ -44,8 +46,7 @@ HEnt htab[HASH_SIZE];
 u16 xframe;
 typedef struct { s16 x, y; u16 id, info; } Call;
 Call calls[255];                        /* the frame's xsp_set / xobj_set calls */
-u8 call_next[255];                      /* per-priority lists */
-u8 bhead[66];
+extern u8 call_next[256], bhead[128];   /* per-priority lists (src/xsp_fast.s: bhead + 128 = call_next) */
 u16 pr_lo = 64, pr_hi;
 u16 ncalls;
 u16 pal_attr[16];                       /* $8000 | MD palette << 13 for each X68000 palette */
@@ -232,7 +233,7 @@ u16 cache_miss(u16 key)
 #ifndef FX_ROM_MAX
 #define FX_ROM_MAX   3072               /* the meshed bomb: DMA from ROM, no conversion */
 #endif
-#define FX_ASLOTS    48                 /* (of 113 / 159: the boss's death with the player and bullets) */
+#define FX_ASLOTS    (cache_a_n / 2)    /* (the boss's death with the player and bullets on screen) */
 #define FX_BSLOTS    12
 static u16 fx_stage, fx_aslots, fx_bslots;
 u16 xsp_tile_for(u16 block, u8 pal, u8 mesh, u16 *keyp)
@@ -318,9 +319,23 @@ void xsp_cache_layout(u16 bg_end)
     plane_fx_forget();                      /* (its held effect cells use cached tiles) */
 }
 
+/* refs src/plane.c looks for: effects (expl2 / expl3, flare) and the large
+ * enemies; xobj_set notes their calls in pl_ix (a bit per ref) */
+u8 pl_refmap[(NREF + 7) / 8];
+static void refmap_set(u16 lo, u16 hi)
+{
+    for (; lo <= hi; lo++)
+        pl_refmap[lo >> 3] |= 1 << (lo & 7);
+}
+
 void xsp_init(void)
 {
     u16 i;
+    refmap_set(0x0B6, 0x0BF);               /* expl2 / expl3 */
+    refmap_set(0xAA9, 0xAAE);               /* flare */
+    refmap_set(0xB18, 0xB18);               /* obj200 body */
+    refmap_set(0xB1E, 0xB31);               /* crab, obj204 .. obj205 core */
+    refmap_set(0xB79, 0xB7A);               /* obj21f */
     for (i = 0; i < NSLOT; i++)
         slot_ent[i] = NO_ENTRY;
     for (i = 0; i < HASH_SIZE; i++)
@@ -347,6 +362,10 @@ extern u8 text_map[28];                 /* screen row r shows text row text_map[
 static void text_sprites(void)
 {
     u8 r, c, n = 0;
+    static u8 last_on_plane;
+    if (!text_spr_dirty && !last_ntext && text_on_plane == last_on_plane)
+        return;                         /* (no text sprites: the usual case in a game) */
+    last_on_plane = text_on_plane;
     for (r = text_on_plane ? 28 : 1; r < 28; r++) {
         u8 tr = text_map[r];
         u32 m = text_row_mask[tr];

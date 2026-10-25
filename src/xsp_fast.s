@@ -55,10 +55,9 @@ record:
     move.w  %d3, (%a0)
     move.w  %a1, %d4                    | call index
     move.w  rec_pr, %d1                 | priority (set by the caller)
-    lea     bhead, %a1
-    lea     call_next, %a0
-    move.b  0(%a1,%d1.w), 0(%a0,%d4.w)
-    move.b  %d4, 0(%a1,%d1.w)
+    lea     call_next, %a0              | (bhead = call_next - 128)
+    move.b  -128(%a0,%d1.w), 0(%a0,%d4.w)
+    move.b  %d4, -128(%a0,%d1.w)
     addq.w  #1, ncalls
     cmp.w   pr_lo, %d1
     bcc.s   1f
@@ -89,35 +88,33 @@ h_xsp_set:
     bcs.s   1f
     cmp.w   #DEBRIS_HI, %d2
     bcs.s   8f
-1:  movem.l %d4-%d5, -(%sp)
+1:  move.l  %d4, -(%sp)                | (only d0 / a0 are free)
     move.w  ncalls, %d4
     cmp.w   #MAX_CALLS, %d4
     bcc.s   7f
-    move.w  %d4, %d5
-    lsl.w   #3, %d5
+    lsl.w   #3, %d4
     lea     calls, %a0
-    add.w   %d5, %a0
+    add.w   %d4, %a0
+    lsr.w   #3, %d4
     move.w  %d0, (%a0)+
     move.w  %d1, (%a0)+
-    move.w  %d2, %d5
-    or.w    #0x8000, %d5                | (a PCG, not a ref)
-    move.w  %d5, (%a0)+
+    move.w  %d2, (%a0)
+    bset    #7, (%a0)+                  | (a PCG, not a ref)
+    addq.l  #1, %a0
     move.w  %d3, (%a0)
-    move.w  %d3, %d5
-    and.w   #63, %d5                    | priority list
-    lea     bhead, %a0
-    move.b  0(%a0,%d5.w), %d0
-    move.b  %d4, 0(%a0,%d5.w)
-    lea     call_next, %a0
-    move.b  %d0, 0(%a0,%d4.w)
+    moveq   #63, %d0
+    and.w   %d3, %d0                    | priority list
+    lea     call_next, %a0              | (bhead = call_next - 128)
+    move.b  -128(%a0,%d0.w), 0(%a0,%d4.w)
+    move.b  %d4, -128(%a0,%d0.w)
     addq.w  #1, ncalls
-    cmp.w   pr_lo, %d5
+    cmp.w   pr_lo, %d0
     bcc.s   2f
-    move.w  %d5, pr_lo
-2:  cmp.w   pr_hi, %d5
+    move.w  %d0, pr_lo
+2:  cmp.w   pr_hi, %d0
     bls.s   7f
-    move.w  %d5, pr_hi
-7:  movem.l (%sp)+, %d4-%d5
+    move.w  %d0, pr_hi
+7:  move.l  (%sp)+, %d4
 8:  moveq   #1, %d0
     rts
 9:  moveq   #0, %d0
@@ -154,33 +151,39 @@ h_xobj_set:
     cmp.w   #EFFECT_PR, %d4
     bls.s   8f
     moveq   #EFFECT_PR, %d4
-8:  move.w  %d4, rec_pr
-    move.w  ncalls, %d4
-    bsr     record
-    cmp.w   ncalls, %d4                 | (not recorded: the list is full)
-    beq     9f
-    move.w  %d2, %d1                    | refs src/plane.c looks for (effects, large
-    sub.w   #0x0B6, %d1                 | enemies) -> pl_ix
-    cmp.w   #0x0BF - 0x0B6, %d1
-    bls.s   5f
-    move.w  %d2, %d1
-    sub.w   #0xAA9, %d1
-    cmp.w   #0xAAE - 0xAA9, %d1
-    bls.s   5f
-    move.w  %d2, %d1
-    sub.w   #0xB18, %d1                 | obj200 body
-    beq.s   5f
-    sub.w   #0xB1E - 0xB18, %d1         | crab, boss obj204 .. stage 2 boss obj205 core
-    cmp.w   #0xB31 - 0xB1E, %d1
-    bls.s   5f
-    sub.w   #0xB79 - 0xB1E, %d1         | obj21f
-    cmp.w   #0xB7A - 0xB79, %d1
-    bhi     9f
-5:  move.w  pl_n, %d1
+8:  move.w  ncalls, %a2                | (record, inlined; d4 = priority)
+    cmp.w   #MAX_CALLS, %a2
+    bcc.s   9f
+    move.w  %a2, %a0
+    add.w   %a0, %a0
+    add.w   %a0, %a0
+    add.w   %a0, %a0
+    add.l   #calls, %a0
+    move.w  %d0, (%a0)+
+    move.w  %d1, (%a0)+
+    move.w  %d2, (%a0)+
+    move.w  %d3, (%a0)
+    move.w  %a2, %d0                    | call index
+    lea     call_next, %a0              | (bhead = call_next - 128)
+    move.b  -128(%a0,%d4.w), 0(%a0,%d0.w)
+    move.b  %d0, -128(%a0,%d4.w)
+    addq.w  #1, ncalls
+    cmp.w   pr_lo, %d4
+    bcc.s   1f
+    move.w  %d4, pr_lo
+1:  cmp.w   pr_hi, %d4
+    bls.s   3f
+    move.w  %d4, pr_hi
+3:  move.w  %d2, %d1                    | refs src/plane.c looks for (effects, large
+    lsr.w   #3, %d1                     | enemies: pl_refmap, xsp.c) -> pl_ix
+    lea     pl_refmap, %a0
+    btst    %d2, 0(%a0,%d1.w)
+    beq.s   9f
+    move.w  pl_n, %d1
     cmp.w   #PL_MAX, %d1
-    bcc     9f
+    bcc.s   9f
     lea     pl_ix, %a0
-    move.b  %d4, 0(%a0,%d1.w)
+    move.b  %d0, 0(%a0,%d1.w)
     addq.w  #1, pl_n
 9:  rts
 
@@ -258,20 +261,13 @@ xsp_build:
 | -- single PCG
     move.w  (%a3)+, %d0
     asr.w   #6, %d0
-    sub.w   #16, %d0                    | sx
+    sub.w   #16, %d0                    | sx (-16..255: h_xsp_set keeps 0 <= x < $4400)
     move.w  (%a3)+, %d1
     asr.w   #6, %d1
     sub.w   #16, %d1                    | sy
-    move.w  %d0, %d4
-    add.w   #15, %d4
-    cmp.w   #270, %d4                   | -15 <= sx <= 255
-    bhi     70f
-    move.w  %d1, %d4
-    add.w   #15, %d4
-    cmp.w   #238, %d4                   | -15 <= sy <= 223
-    bhi     70f
-    and.w   #0x7FFF, %d2
-    add.w   %d2, %d2
+    cmp.w   #223, %d1                   | sy <= 223 (>= -16 as x)
+    bgt     70f
+    add.w   %d2, %d2                    | (bit 15 shifted out)
     lea     pcg_block, %a1
     move.w  0(%a1,%d2.w), %d4
     move.w  2(%a3), %d3                 | info
@@ -501,7 +497,10 @@ lookup_slow:
     .section .note.GNU-stack,"",%progbits
 
     .bss
-    .globl  stat_pieces, stat_calls, stat_out, stat_rec, pl_ix, pl_n
+    .globl  stat_pieces, stat_calls, stat_out, stat_rec, pl_ix, pl_n, bhead, call_next
+    .balign 2
+bhead:       .space 128                 | list head per priority (0xFF: empty), then
+call_next:   .space 256                 | the next call: one base register reaches both
 rec_pr:      .word 0
 pl_n:        .word 0                    | calls src/plane.c looks at: count, indices
 pl_ix:       .space 64
