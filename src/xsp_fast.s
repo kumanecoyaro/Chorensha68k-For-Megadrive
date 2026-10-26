@@ -324,7 +324,66 @@ pr_map:
 | TURRET_PAIR2): the same PCG and info as the call just recorded (the first
 | one), within 16 px: that call becomes the pair's ref (pair_lut rows
 | TURRET_ROW..), this one is not recorded
-    .globl  h_xsp_set_tur2
+    .globl  h_tur_a1, h_tur_a2, h_tur_b1, h_tur_b2
+| by the angle (a1: the angle, or the second barrel's angle * 4 + a table
+| offset): tur_tab[flips][site][angle] (tools/convert_sprites.py TURRET_SITES,
+| from the original's position tables) is the pair's ref, if the PCG is
+| tur_pcg's; else (another PCG base, no ref) the steps as below
+h_tur_a1:
+    movem.l %d4-%d6/%a1, -(%sp)
+    move.w  %a1, %d4
+    and.w   #0xFF, %d4
+    bra.s   1f
+h_tur_a2:
+    movem.l %d4-%d6/%a1, -(%sp)
+    move.w  %a1, %d4
+    lsr.w   #2, %d4
+    and.w   #0xFF, %d4
+    add.w   #0x100, %d4
+    bra.s   1f
+h_tur_b1:
+    movem.l %d4-%d6/%a1, -(%sp)
+    move.w  %a1, %d4
+    and.w   #0xFF, %d4
+    add.w   #0x200, %d4
+    bra.s   1f
+h_tur_b2:
+    movem.l %d4-%d6/%a1, -(%sp)
+    move.w  %a1, %d4
+    lsr.w   #2, %d4
+    and.w   #0xFF, %d4
+    add.w   #0x300, %d4
+1:  move.w  ncalls, %d5
+    beq     78f
+    subq.w  #1, %d5
+    lsl.w   #3, %d5
+    lea     calls, %a1
+    add.w   %d5, %a1
+    move.w  %d2, %d5
+    bset    #15, %d5
+    cmp.w   4(%a1), %d5                 | the first barrel: the same PCG
+    bne     78f
+    cmp.w   6(%a1), %d3                 | and info
+    bne     78f
+    lea     tur_pcg, %a0
+    cmp.b   0(%a0,%d4.w), %d2
+    bne.s   2f
+    move.w  %d3, %d5
+    rol.w   #2, %d5
+    and.w   #3, %d5                     | flips (bit 0 H, bit 1 V)
+    lsl.w   #8, %d5
+    lsl.w   #2, %d5
+    add.w   %d5, %d4                    | (flips * 4 + site) * 256 + angle
+    add.w   %d4, %d4
+    lea     tur_tab, %a0
+    move.w  0(%a0,%d4.w), %d5
+    beq.s   2f
+    move.w  %d5, 4(%a1)
+    movem.l (%sp)+, %d4-%d6/%a1
+    moveq   #1, %d0
+    rts
+2:  movem.l (%sp)+, %d4-%d6/%a1
+
 h_xsp_set_tur2:
     movem.l %d4-%d6/%a1, -(%sp)
     move.w  ncalls, %d4

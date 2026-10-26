@@ -36,8 +36,8 @@ $(BUILD)/assets/XSP_DAT/map.bg0: $(BUILD)/disk/CRS68K/SZ2.X
 $(GEN)/assets.c $(GEN)/assets.h: $(BUILD)/assets/XSP_DAT/map.bg0 tools/convert_assets.py tools/x68gfx.py
 	$(PY) tools/convert_assets.py $(BUILD)/disk/CRS68K/SZ2.X $(BUILD)/assets/XSP_DAT $(GEN)
 
-$(GEN)/spr.c $(GEN)/spr.h $(GEN)/spr_tiles.bin $(GEN)/spr_def.inc: $(BUILD)/assets/XSP_DAT/map.bg0 tools/convert_sprites.py tools/x68gfx.py tools/hot_keys.txt tools/turret_pairs.txt
-	$(PY) tools/convert_sprites.py $(BUILD)/assets/XSP_DAT $(GEN)
+$(GEN)/spr.c $(GEN)/spr.h $(GEN)/spr_tiles.bin $(GEN)/spr_def.inc: $(BUILD)/assets/XSP_DAT/map.bg0 tools/convert_sprites.py tools/x68gfx.py tools/hot_keys.txt tools/turret_pairs.txt tools/xfile.py
+	$(PY) tools/convert_sprites.py $(BUILD)/assets/XSP_DAT $(GEN) $(BUILD)/disk/CRS68K/SZ2.X
 
 $(GEN)/pcm.c $(GEN)/pcm.h $(GEN)/pcm.bin: $(BUILD)/assets/XSP_DAT/map.bg0 tools/convert_pcm.py
 	$(PY) tools/convert_pcm.py $(BUILD)/disk/CRS68K/PCM_DAT/SZ2_PCM.CNF $(BUILD)/assets/PCM_DAT $(GEN)

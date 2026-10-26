@@ -13,6 +13,7 @@ handler's rte.  --pad: buttons held (bit 5 = C: fire), A presses START on
 the title.
 """
 import sys, struct, bisect, subprocess, collections
+import unicorn
 from unicorn import *
 from unicorn.m68k_const import *
 
@@ -68,7 +69,14 @@ def main():
     callers = collections.Counter()
     def block(uc, addr, size, ud):
         if addr == cl_addr and lo <= st['gf'] <= hi and cl_d2[0] <= uc.reg_read(UC_M68K_REG_D2) & 0xFFFF <= cl_d2[1]:
-            callers[struct.unpack('>I', uc.mem_read(uc.reg_read(UC_M68K_REG_A7), 4))[0]] += 1
+            ra = struct.unpack('>I', uc.mem_read(uc.reg_read(UC_M68K_REG_A7), 4))[0]
+            callers[ra] += 1
+            if '--regs' in sys.argv and callers[ra] <= 8:      # --regs: registers at the first calls per caller
+                r = [uc.reg_read(globals()[f'UC_M68K_REG_{n}']) for n in
+                     ('D0', 'D1', 'D2', 'D3', 'D4', 'A1', 'A2', 'A3')]
+                o = struct.unpack('>hhHH', uc.mem_read(r[7], 8))
+                print(f'--regs {ra:#x} d0-d4 ' + ' '.join(f'{v & 0xFFFF:04x}' for v in r[:5]) +
+                      f' a1 {r[5]:x} a2 {r[6]:x} obj x/y/4/6 {o}')
         if fn_pend and addr == fn_pend[-1][0] and uc.reg_read(UC_M68K_REG_A7) == fn_pend[-1][1]:
             r_, s_, n0 = fn_pend.pop()
             if lo <= st['gf'] <= hi:

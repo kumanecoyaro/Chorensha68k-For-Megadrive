@@ -126,6 +126,13 @@ NEEDLE_STEPS = [(dx, dy) for dx in (-8, 8) for dy in (9, 10, 11, 12)]
 # seen in play: tools/turret_pairs.txt)
 TURRET_LO, TURRET_HI = 0x6B, 0x7C
 TURRET_ROW = 17
+# the call sites of the second barrels (tools/relocate.py TURRET_PAIR2): first / second
+# barrel's angle offset, y table, x table index offset, PCG offset, object PCG base
+# ($4(a3) of the turret types $62 / $50), the angle in a1 is the second barrel's
+TURRET_SITES = [(0x48, 0xB8, 0x403be, 0x800, 9, 0x62, False),
+                (0x10, -0x10, 0x423be, 0x1000, 18, 0x62, True),
+                (0x48, 0xB8, 0x403be, 0x800, 27, 0x50, False),
+                (0x08, -0x08, 0x45bbe, 0x1e00, 36, 0x50, True)]
 # the stage 3 boss's thick beams: lanes of refs 1-3 (16 x 32 flames), two of them
 # 16 px apart side by side as one 32 x 32 sprite (src/xsp_fast.s h_xobj_set: LBEAM_REF + ref - 1)
 LBEAM_REFS = (1, 2, 3)
@@ -193,7 +200,7 @@ def add_flipped(ts, px):
             return flips | (k + 1)
     return ts.add(tile_bytes(px)) + 1
 
-def main(xsp, out):
+def main(xsp, out, sz2x=None):
     rd = lambda f: open(os.path.join(xsp, f), 'rb').read()
     # ---- global PCG pool
     pcg = bytearray(); bases = {}
@@ -346,6 +353,34 @@ def main(xsp, out):
             pair_lut[k] = len(ref_start) - pair_ref
     for k, c in tur_alias:
         pair_lut[k] = pair_lut[c]
+    # the turrets' second barrels by angle (src/xsp_fast.s h_tur_*): the original
+    # (fn_15ee8) puts barrel i at angle a + o_i: x + D_3e3bc[a + o_i + K], y + Dy[a + o_i]
+    # (1/64 px), PCG base + D_3dbbc[a] + k, flips info ^ D_3dbbc[a] + 2; tur_tab[flips][site]
+    # [index] = the pair's ref (0: none), index = the angle as the second call has it
+    # in a1, tur_pcg[site][index] = the PCG it is for
+    tur_tab = [0] * (4 * 4 * 256); tur_pcg = [0] * (4 * 256)
+    if sz2x:
+        from xfile import XFile
+        im = XFile(sz2x).image
+        sw = lambda a: struct.unpack_from('>h', im, a)[0]
+        for site, (o1, o2, dy_tab, kx, k, base, by_a2) in enumerate(TURRET_SITES):
+            for a in range(256):
+                pcg_ = base + sw(0x3dbbc + a * 4) + k
+                a1_, a2_ = (a + o1) & 255, (a + o2) & 255
+                idx = a2_ if by_a2 else a
+                tur_pcg[site * 256 + idx] = pcg_ & 255
+                if not TURRET_LO <= pcg_ <= TURRET_HI:
+                    continue
+                dx = (sw(0x3e3bc + (a2_ + kx) * 4) - sw(0x3e3bc + (a1_ + kx) * 4)) / 64
+                dy = (sw(dy_tab + a2_ * 4) - sw(dy_tab + a1_ * 4)) / 64
+                for f in range(4):                  # bit 0: H flip, bit 1: V flip (info >> 14)
+                    ndx = math.floor((-dx if f & 1 else dx) + 0.5)
+                    ndy = math.floor((-dy if f & 2 else dy) + 0.5)
+                    if abs(ndx) > 16 or abs(ndy) > 16:
+                        continue
+                    r = pair_lut[(TURRET_ROW + pcg_ - TURRET_LO) * 33 * 33 + (ndy + 16) * 33 + ndx + 16]
+                    if r:
+                        tur_tab[(f * 4 + site) * 256 + idx] = pair_ref + r - 1
     lbeam_ref = len(ref_start)
     for r in LBEAM_REFS:
         frm, off, cnt, base = ref_src[r]
@@ -480,6 +515,8 @@ def main(xsp, out):
         L.append('};')
     arr('u16', 'pcg_block', pcg_block)
     arr('u16', 'pair_lut', pair_lut, 33)
+    arr('u16', 'tur_tab', tur_tab)
+    arr('u8', 'tur_pcg', tur_pcg)
     arr('u16', 'ref_start', ref_start)
     # bounding box of each ref's pieces (x0, y0, x1, y1; x1 / y1 exclusive), for culling
     box = []
@@ -596,4 +633,4 @@ def main(xsp, out):
           f'{len(blocks.data) // 1024} KB tiles; palette slots {"".join(str(s) for s in slot)}')
 
 if __name__ == '__main__':
-    main(*sys.argv[1:3])
+    main(*sys.argv[1:4])

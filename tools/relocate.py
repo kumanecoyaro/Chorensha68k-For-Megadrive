@@ -126,8 +126,9 @@ PARTICLE_INITS = [
 
 # the stage 5 battleship's turrets (fn_15ee8: L1689c / L16cxx): each draws its
 # twin barrels with two xsp_set calls in a row; the second one's `jsr fn_2c9fe`
-# -> `jsr h_xsp_set_tur2` (src/xsp_fast.s: the two as one pre-composited sprite)
-TURRET_PAIR2 = [0x16932, 0x1699c, 0x16d44, 0x16e10]
+# -> `jsr h_tur_*` (src/xsp_fast.s: the two as one pre-composited sprite)
+# (by the turret angle, src/xsp_fast.s h_tur_*: the call site tells the tables)
+TURRET_PAIR2 = [(0x16932, 'h_tur_a1'), (0x1699c, 'h_tur_a2'), (0x16d44, 'h_tur_b1'), (0x16e10, 'h_tur_b2')]
 
 # immediate patches: (address, old bytes hex, new bytes hex, comment)
 def patches():
@@ -232,7 +233,7 @@ def main(xpath, lst, xspdir, out):
         img[addr:addr + len(nb)] = nb
 
     # ---- hooks
-    names = ['h_alloc_none', 'h_xsp_set_tur2']
+    names = ['h_alloc_none'] + [n for _, n in TURRET_PAIR2]
     hs = sorted(h[0] for h in HOOKS)
     for a, b in zip(hs, hs[1:]):
         assert b - a >= 6, f'hook patches overlap at ${a:x} / ${b:x}'
@@ -243,10 +244,9 @@ def main(xpath, lst, xspdir, out):
         i = names.index(sym)
         struct.pack_into('>HI', img, addr, 0x4EF9, HOOK_BASE + 6 * i)
 
-    ti = HOOK_BASE + 6 * names.index('h_xsp_set_tur2')
-    for a in TURRET_PAIR2:
+    for a, n in TURRET_PAIR2:
         assert img[a:a + 2] == b'\x4e\xb9' and struct.unpack_from('>I', img, a + 2)[0] == ORIG_ROM + 0x2c9fe, hex(a)
-        struct.pack_into('>I', img, a + 2, ti)
+        struct.pack_into('>I', img, a + 2, HOOK_BASE + 6 * names.index(n))
 
     # particle allocations: retarget the first jsr fn_040b6 of each init function
     ai = HOOK_BASE + 6 * names.index('h_alloc_none')
