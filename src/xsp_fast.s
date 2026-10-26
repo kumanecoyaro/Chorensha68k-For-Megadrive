@@ -129,7 +129,7 @@ h_xsp_set_main:
     beq     30f
     bra.s   29f
 28: cmp.w   #NEEDLE_PCG, %d2            | the stage 3 boss's needle streams (palette 1):
-    bne.s   29f                         | two side by side as one sprite (pair_lut row 16)
+    bne.s   26f                         | two side by side as one sprite (pair_lut row 16)
     move.l  %d0, -(%sp)
     move.w  %d3, %d0
     and.w   #0x0F00, %d0
@@ -138,6 +138,10 @@ h_xsp_set_main:
     bne.s   29f
     st      needle_try
     bra     20f
+26: cmp.w   #TURRET_HI, %d2             | the stage 5 battleship's turrets (palette 6):
+    bhi.s   29f                         | the twin barrels come one after the other,
+    cmp.w   #TURRET_LO, %d2             | as one pre-composited sprite (pair_lut rows
+    bcc     70f                         | TURRET_ROW..)
 29:
 xsp_set_rec:
     move.l  %d4, -(%sp)                | (only d0 / a0 are free)
@@ -319,6 +323,80 @@ pr_map:
     beq     h_xsp_set_main
     sf      needle_try
     bra     xsp_set_rec
+
+| a turret's second barrel: the same PCG and info as the turret call just
+| before it (last_tur, a call of this frame), within 16 px: that call becomes
+| the pair's ref and this one is not recorded
+70: movem.l %d4-%d7/%a1, -(%sp)
+    move.w  last_tur, %d5
+    cmp.w   ncalls, %d5
+    bcc     78f                         | (none: -1)
+    lsl.w   #3, %d5
+    lea     calls, %a1
+    add.w   %d5, %a1
+    move.w  %d2, %d5
+    bset    #15, %d5
+    cmp.w   4(%a1), %d5                 | the same PCG
+    bne     78f
+    cmp.w   6(%a1), %d3                 | the same info
+    bne     78f
+    move.w  (%a1), %d5
+    asr.w   #6, %d5
+    move.w  %d0, %d6
+    asr.w   #6, %d6
+    sub.w   %d5, %d6
+    add.w   #16, %d6                    | dx + 16 in 0..32
+    cmp.w   #32, %d6
+    bhi     78f
+    move.w  2(%a1), %d5
+    asr.w   #6, %d5
+    move.w  %d1, %d4
+    asr.w   #6, %d4
+    sub.w   %d5, %d4
+    add.w   #16, %d4                    | dy + 16 in 0..32
+    cmp.w   #32, %d4
+    bhi.s   78f
+    tst.w   %d3
+    bpl.s   72f
+    neg.w   %d4                         | (V flip)
+    add.w   #32, %d4
+72: btst    #14, %d3
+    beq.s   73f
+    neg.w   %d6                         | (H flip)
+    add.w   #32, %d6
+73: move.w  %d2, %d5
+    add.w   %d5, %d5
+    lea     turret_rows - 2 * TURRET_LO, %a0
+    moveq   #0, %d7
+    move.w  0(%a0,%d5.w), %d7           | row * 33 * 33
+    add.w   %d6, %d7
+    add.w   %d4, %d4
+    lea     mul33x2, %a0
+    add.w   0(%a0,%d4.w), %d7           | + (dy + 16) * 33 + dx + 16
+    add.l   %d7, %d7                    | (< $10000)
+    lea     pair_lut, %a0
+    move.w  0(%a0,%d7.l), %d5
+    beq.s   78f
+    add.w   #PAIR_REF - 1, %d5
+    move.w  %d5, 4(%a1)
+    move.w  #-1, last_tur
+    movem.l (%sp)+, %d4-%d7/%a1
+    moveq   #1, %d0
+    rts
+78: move.w  ncalls, last_tur            | (the index this call gets)
+    movem.l (%sp)+, %d4-%d7/%a1
+    bra     xsp_set_rec
+turret_rows:
+    .irp    r, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17
+    .word   (TURRET_ROW + \r) * 33 * 33
+    .endr
+    .if     TURRET_HI - TURRET_LO - 17
+    .error  "turret_rows: one per turret PCG"
+    .endif
+mul33x2:
+    .irp    r, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32
+    .word   \r * 33
+    .endr
 
 | a vertical laser segment (the lasers fired straight down): 16 px above or
 | below the last call of its priority, the same PCG, info and x: the two
@@ -1297,6 +1375,7 @@ dbl_b:       .space DBL_MAX * 8
 dbl_slot:    .space DBL_MAX
     .balign 2
     .globl  act_n, hint_n, act_slot, act_b, act_a, split_line, split_vs, split_hs
+last_tur:    .word 0                    | h_xsp_set_main: the last turret call (the first barrel)
 needle_try:  .byte 0                    | h_xsp_set_main: a needle pair being looked for
     .balign 2
 split_line:  .word 0                    | plane A split for the frame shown (_hint):

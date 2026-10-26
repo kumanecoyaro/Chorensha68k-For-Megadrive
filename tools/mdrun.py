@@ -3,6 +3,7 @@
 
 usage: mdrun.py CORE.so ROM.bin FRAMES OUTPREFIX [--shot N,N,...] [--input SCRIPT] [--wav] [--dump N,N,...] [--state FILE]
                  [--opt key=value]   (e.g. genesis_plus_gx_ym2612=nuked (ym2612))
+                 [--exec FILE.py]   (FILE's frame(f, ram) after every frame: RAM as bytes)
 
 SCRIPT is a comma-separated list of  start-end:BUTTONS  entries, e.g.
   "60-400:R,100-500:B,400-700:L"  (U D L R A B C S = up down left right A B C start)
@@ -36,7 +37,7 @@ STATE_CB = C.CFUNCTYPE(C.c_int16, C.c_uint, C.c_uint, C.c_uint, C.c_uint)
 
 def main():
     core, rom, frames, prefix = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
-    shots = set(); dumps = set(); script = []; audio = None; opts = {}; state_file = None
+    shots = set(); dumps = set(); hook = None; script = []; audio = None; opts = {}; state_file = None
     args = sys.argv[5:]
     while args:
         a = args.pop(0)
@@ -49,6 +50,9 @@ def main():
             dumps = {int(v) for v in args.pop(0).split(',')}
         elif a == '--state':                   # load a core save state (retro_unserialize) first
             state_file = args.pop(0)
+        elif a == '--exec':
+            hook = {}
+            exec(open(args.pop(0)).read(), hook)
         elif a == '--wav':
             audio = bytearray()
         elif a == '--input':
@@ -140,6 +144,8 @@ def main():
             state['img'].save(f'{prefix}_{f:05d}.png')
         if f in dumps:
             dump(f'{prefix}_{f:05d}')
+        if hook:
+            hook['frame'](f, C.string_at(lib.retro_get_memory_data(2), 0x10000))
     if state['img'] is not None:
         state['img'].save(f'{prefix}_last.png')
     dump(prefix)
@@ -147,6 +153,8 @@ def main():
         w = wave.open(prefix + '.wav', 'wb')
         w.setnchannels(2); w.setsampwidth(2); w.setframerate(44100)
         w.writeframes(bytes(audio)); w.close()
+    if hook and 'done' in hook:
+        hook['done']()
     lib.retro_deinit()
 
 if __name__ == '__main__':
