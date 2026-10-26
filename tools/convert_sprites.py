@@ -141,6 +141,14 @@ PLANE_GROUPS = [
         [('obj20F', 2, 0, 8), ('obj20F', 1, -23, 8, 4), ('obj20F', 1, 22, 8, 4, 1),
          ('obj20F', 0, -52, 8, -13), ('obj20F', 0, 51, 8, -13, 1)],
     ],
+    [   # stage 3 formations of type $1A1 (obj1a0, palette 6): folded $B15, the pods out
+        # (as IMG_O1A1): src/plane.c formation mode (IMG_FM: several of them on plane A)
+        [('obj1a0', 0, 0, 6)],
+        [('obj1a0', 2, -28, 6, -12), ('obj1a0', 2, 28, 6, -12, 1), ('obj1a0', 1, 0, 6)],
+    ] + [   # (+ 2 ..: the pods opening, 16 + s px out and s up, s = 2, 4 .. 10)
+        [('obj1a0', 2, -16 - sp, 6, -sp), ('obj1a0', 2, 16 + sp, 6, -sp, 1), ('obj1a0', 1, 0, 6)]
+        for sp in range(2, 12, 2)
+    ],
 ]
 BOMB_REFS = list(range(0xB6, 0xC0)) + list(range(0xAA9, 0xAAF))   # expl2 / expl3 / flare (src/plane.c is_effect)
 BOMB_PALS = (1, 3, 5, 12)  # X68000 palettes the bomb draws them with (info $x13F / $xC3F ...)

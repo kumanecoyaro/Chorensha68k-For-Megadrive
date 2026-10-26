@@ -18,6 +18,21 @@ h_alloc_none:
     suba.l  %a0, %a0
     rts
 
+| ---- L15c02 (tools/relocate.py MID_JUMPS: the replaced tst / beq): a type
+| $1A1 unit (a3, its spawner a0) just placed on its path: src/x68.c o1a1_shift
+    .globl  h_o1a1_y
+h_o1a1_y:
+    movem.l %d0-%d2/%a0-%a2, -(%sp)
+    move.l  %a0, -(%sp)
+    move.l  %a3, -(%sp)
+    jsr     o1a1_shift
+    addq.l  #8, %sp
+    movem.l (%sp)+, %d0-%d2/%a0-%a2
+    tst.w   0x70(%a0)
+    beq.s   1f
+    jmp     0x10000 + 0x15c0a
+1:  jmp     0x10000 + 0x15c8c
+
 | ---- fn_05574 (BG full redraw, hooked by x_bg_full): its first two
 | instructions (the 6 bytes replaced by the hook jump), then the rest
     .globl  orig_05574

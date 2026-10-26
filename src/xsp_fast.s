@@ -1436,26 +1436,34 @@ pair_put:
     movem.l (%sp)+, %d2-%d7/%a2-%a6
     rts
 
-| Level 4 H-int (src/vdp.c register 10: after line DBL_A - 1, or every 8
-| lines while plane A shows two images, src/plane.c; off once nothing is
-| left to do in the frame).  The line from the
-| V counter (rounded to the 8-line boundary: a late H-int, held off while
-| the VBlank handler masks it, does its work late rather than not at all):
+| Level 4 H-int (src/plane.c plane_vblank: the first, at the latest at the
+| first line with something to do; then each H-int sets register 10 for the
+| one after the next: at the first line with something to do after that, 10:
+| below).  The line from the V counter (rounded to the 8-line boundary: a
+| late H-int, held off while the VBlank handler or the sound masks it, does
+| its work late rather than not at all; it plans from the line it sees, so
+| the H-ints come no later than planned):
 | * split_line (0: none): plane A's scroll from that line on is split_vs /
 |   split_hs: the second image (the second of two battleships)
+| * act_fm_ev from fm_evi (formation mode, src/plane.c fm_ev; a line 0xFF
+|   after the last): the VSRAM values of the columns from the lines reached
 | * DBL_A: the sprite doubler.  The bullets above line DBL_A have been
 |   shown: their slots in the sprite table take the bullets below DBL_B
 |   (xsp_upload sets act_*; hint_n is the count still to write this frame).
 |   VRAM writes in the active display: 2 entries a line.
+| Nothing left: the H-int off (hint_nx 0xFF).
     .globl  _hint
 _hint:
     move.l  %d0, -(%sp)
     moveq   #0, %d0
     move.b  0xC00008, %d0               | V counter
+    cmp.b   hint_nx, %d0                | (nothing due before hint_nx)
+    bcs     20f
     cmp.b   #0xE0, %d0                  | (in the VBlank: a stale H-int, H-int
     bcc     8f                          | just turned on)
     addq.w  #4, %d0
     and.w   #0xF8, %d0                  | the boundary just reached
+    movem.l %d1-%d4/%a0, -(%sp)
     tst.w   split_line
     beq.s   3f
     cmp.w   split_line, %d0
@@ -1465,14 +1473,42 @@ _hint:
     move.w  split_vs, 0xC00000
     move.l  #0x40000000 + ((VRAM_HSCROLL & 0x3FFF) << 16) + (VRAM_HSCROLL >> 14), 0xC00004
     move.w  split_hs, 0xC00000
-3:  tst.w   hint_n
-    beq.s   9f
+3:  moveq   #0, %d1
+    move.b  fm_evi, %d1
+    lea     act_fm_ev, %a0
+    move.w  %d1, %d2
+    lsl.w   #2, %d2
+    add.w   %d2, %a0
+    cmp.b   (%a0), %d0                  | (formation mode: the first one's line not
+    bcs.s   6f                          | reached)
+    move.w  #0x8F04, 0xC00004           | (VSRAM: plane A's columns one after the other)
+5:  moveq   #0, %d2
+    move.b  1(%a0), %d2                 | columns first << 4 | last
+    move.w  %d2, %d3
+    and.w   #15, %d3
+    lsr.w   #4, %d2
+    sub.w   %d2, %d3                    | (count - 1)
+    lsl.w   #2, %d2                     | VSRAM address column * 4
+    swap    %d2
+    or.l    #0x40000010, %d2
+    move.l  %d2, 0xC00004
+    move.w  2(%a0), %d2
+7:  move.w  %d2, 0xC00000
+    dbra    %d3, 7b
+    addq.l  #4, %a0
+    addq.b  #1, %d1
+    cmp.b   (%a0), %d0
+    bcc.s   5b
+    move.w  #0x8F02, 0xC00004
+    move.b  %d1, fm_evi
+6:  tst.w   hint_n
+    beq.s   30f
     cmp.w   #DBL_A, %d0
-    bcs.s   9f
-    movem.l %d1/%a0-%a2, -(%sp)
-    move.w  hint_n, %d0
+    bcs.s   30f
+    movem.l %a1-%a2, -(%sp)
+    move.w  hint_n, %d3
     clr.w   hint_n
-    subq.w  #1, %d0
+    subq.w  #1, %d3
     lea     act_slot, %a1
     lea     act_b, %a2
     lea     0xC00004, %a0
@@ -1485,15 +1521,77 @@ _hint:
     move.w  #0xD800 >> 14, (%a0)
     move.l  (%a2)+, -4(%a0)
     move.l  (%a2)+, -4(%a0)
-    dbra    %d0, 2b
-    movem.l (%sp)+, %d1/%a0-%a2
-9:  tst.w   split_line                  | nothing more this frame: the H-int off
-    bne.s   8f                          | (src/plane.c plane_vblank turns it on;
-    tst.w   hint_n                      | while split it comes every 8 lines)
-    bne.s   8f
-    move.w  #0x8004, 0xC00004           | (register 0: H-int off)
+    dbra    %d3, 2b
+    movem.l (%sp)+, %a1-%a2
+| from line d0: the next line due (d1: hint_nx), the first line with
+| something to do after the next H-int (d2: register 10 for the reload there)
+30: move.w  #0x100, %d1
+    move.w  #0x100, %d2
+    move.w  %d0, %d3
+    add.w   hint_r1, %d3                | (the next H-int's line)
+    move.w  split_line, %d4
+    beq.s   1f
+    move.w  %d4, %d1
+    cmp.w   %d3, %d4
+    bls.s   1f
+    move.w  %d4, %d2
+1:  tst.w   hint_n
+    beq.s   1f
+    move.w  #DBL_A, %d4
+    cmp.w   %d4, %d1
+    bls.s   2f
+    move.w  %d4, %d1
+2:  cmp.w   %d3, %d4
+    bls.s   1f
+    cmp.w   %d4, %d2
+    bls.s   1f
+    move.w  %d4, %d2
+1:  moveq   #0, %d4
+    move.b  fm_evi, %d4
+    lea     act_fm_ev, %a0
+    lsl.w   #2, %d4
+    add.w   %d4, %a0
+    moveq   #0, %d4
+    move.b  (%a0), %d4
+    cmp.w   %d4, %d1
+    bls.s   3f
+    move.w  %d4, %d1
+3:  cmp.w   %d3, %d4
+    bhi.s   4f
+    cmp.b   #0xFF, %d4
+    beq.s   5f
+    addq.l  #4, %a0
+    move.b  (%a0), %d4
+    bra.s   3b
+4:  cmp.w   %d4, %d2
+    bls.s   5f
+    move.w  %d4, %d2
+5:  cmp.w   #0xE0, %d1
+    bcs.s   1f
+    move.b  #0xFF, hint_nx              | nothing more this frame: the H-int off
+    move.w  #0x8004, 0xC00004           | (src/plane.c plane_vblank turns it on)
+    bra.s   9f
+1:  subq.w  #4, %d1                     | (4 lines early: the rounding above)
+    bcc.s   1f
+    moveq   #0, %d1
+1:  move.b  %d1, hint_nx
+    sub.w   %d3, %d2
+    cmp.w   #0xF8, %d2
+    bls.s   1f
+    move.w  #0xF8, %d2
+1:  cmp.w   hint_r1, %d2
+    beq.s   9f
+    move.w  %d2, hint_r1
+    subq.w  #1, %d2
+    or.w    #0x8A00, %d2
+    move.w  %d2, 0xC00004
+9:  movem.l (%sp)+, %d1-%d4/%a0
 8:  move.l  (%sp)+, %d0
     rte
+20: addq.w  #4, %d0                     | (nothing due: only the planning)
+    and.w   #0xF8, %d0
+    movem.l %d1-%d4/%a0, -(%sp)
+    bra     30b
 
 | xsp_route(on) (src/xsp.c xsp_pairs): laser pairs (h_xsp_set_boss) or not
     .globl  xsp_route
@@ -1536,6 +1634,10 @@ dbl_slot:    .space DBL_MAX
     .globl  act_n, hint_n, act_slot, act_b, act_a, split_line, split_vs, split_hs
 needle_try:  .byte 0                    | h_xsp_set_main: a needle pair being looked for
     .balign 2
+    .globl  hint_nx, hint_r1
+hint_nx:     .byte 0                    | _hint: the first line to look at (V counter)
+    .balign 2
+hint_r1:     .word 0                    | (register 10 + 1: the lines from one H-int to the next)
 split_line:  .word 0                    | plane A split for the frame shown (_hint):
 split_vs:    .word 0                    | from this line on (0: none) this scroll
 split_hs:    .word 0

@@ -183,7 +183,7 @@ def main():
     if '--hot' in sys.argv:
         fn = arg('--hot')
         hot = sorted(((c, a) for a, c in prof.items() if name(a) == fn), reverse=True)
-        for c, a in hot[:40]:
+        for c, a in hot[:int(arg("--nhot", "40"))]:
             print(f'   {c * 100 / tot:6.2f}% {a:#x} {fn}+{a - sym.get(fn, a):x}')
 
 if __name__ == '__main__':

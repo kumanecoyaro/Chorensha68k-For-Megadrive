@@ -34,7 +34,7 @@ static u16 cache_a_base = BG_TILE_COUNT, cache_a_n = (CACHE_B_BASE - BG_TILE_COU
 #define KEY_EMPTY 0xFFFF
 #define NO_ENTRY  0xFFFF
 
-#define STAGE_BYTES 3328            /* tiles converted per frame, DMAed in VBlank (RAM: the doubler's lists) */
+#define STAGE_BYTES 3072            /* tiles converted per frame, DMAed in VBlank (RAM: the doubler's lists, src/plane.c fm_ev) */
 #define MAX_UP 48
 #define MAX_HW 64
 
@@ -468,7 +468,7 @@ void xsp_cache_layout(u16 bg_end)
  * flare $AA9-$AAE) and the large enemies (obj1a0 centre $B16, obj200 body $B18, crab .. obj205
  * core $B1E-$B31, obj207 $B34-$B3D, obj20A wing $B44, obj20E $B46-$B4D, obj21f $B79-$B7A); xobj_set notes their
  * calls in pl_ix */
-const u8 pl_refmap[(NREF + 7) / 8] = { [22] = 0xc0, [23] = 0xff, [341] = 0x7e, [354] = 0x40, [355] = 0xc1, [356] = 0xff, [357] = 0xff, [358] = 0xf3, [359] = 0x3f, [360] = 0xf8, [361] = 0x3f, [362] = 0x3f, [363] = 0xc8, [364] = 0xff, [366] = 0x60, [367] = 0x06 };
+const u8 pl_refmap[(NREF + 7) / 8] = { [22] = 0xc0, [23] = 0xff, [341] = 0x7e, [354] = 0x60, [355] = 0xc1, [356] = 0xff, [357] = 0xff, [358] = 0xf3, [359] = 0x3f, [360] = 0xf8, [361] = 0x3f, [362] = 0x3f, [363] = 0xc8, [364] = 0xff, [366] = 0x60, [367] = 0x06 };
 
 void xsp_init(void)
 {
@@ -679,7 +679,7 @@ static void dropchk_after(u16 n)
 #ifdef TEST_LINES
 /* (debug) scan lines spent (V counter, 262 a frame): in plane_frame, in
  * xsp_build, in all (from one flush to the next), and the frames counted */
-u32 lines_plane, lines_build, lines_all, lines_n;
+u32 lines_plane, lines_build, lines_all, lines_n, lines_fm;
 extern volatile u16 vblank_count;
 static u16 lstamp(void)
 {

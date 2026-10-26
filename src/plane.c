@@ -66,6 +66,11 @@ static u16 tbase = ENEMY_BASE;          /* VRAM tile of the loaded group's first
 #define REF_O210   0xB51                /* stage 6 boss obj210 (palette 3): $B51..$B54 drawn twice (mirrored), */
 #define IMG_O200P  65                   /* obj200 whole: + 4 * (palette 7) + left pose * 2 + right pose, */
                                         /* + 8 / 9 the body alone (palette 8 / 7) */
+#define REF_F15    0xB15                /* type $1A1 folded (obj1a0 $B15), opened: REF_O1A1 */
+#define IMG_FM     76                   /* formation mode: + 0 folded, + 1 the pods out, */
+                                        /* + 2 .. 6 opening (s = 2, 4 .. 10) */
+#define FM_MAX     12                   /* units placed */
+#define FM_EV      24                   /* VSRAM changes a frame (src/xsp_fast.s _hint) */
 #define REF_O20F   0xB4E                /* stage 6 obj20F: pods $B4E, $B4F, centre $B50 */
 #define IMG_O20F   75                   /* the whole of it (palette 8) */
 #define IMG_O21F9  63                   /* obj21f in palette 9 (stage 6; images 3 / 4: palette 7) */
@@ -155,6 +160,27 @@ u8 plane_behind;
 /* the stage 5 battleship is on plane A: its turrets get sprites kept for them
  * (src/xsp.c xsp_flush, src/xsp_fast.s enemy_room) */
 u8 plane_turrets;
+/* formation mode: several type $1A1 units of a stage 3 formation (obj1a0,
+ * 64 px apart on their path: a column of them, or a row, every other one
+ * 64 px lower, src/x68.c o1a1_shift) each in its own plane A rows, every
+ * 2-cell column with its own vertical scroll, switched from one unit to the
+ * next at an 8-line boundary in the gap between them by the H-int (fm_ev:
+ * the line, the columns, the VSRAM value; those at line 0 in the VBlank).
+ * Two units in a column are 2 window rows apart (blank): the switch from the
+ * one above (bottom b) to the one below (top t) goes at an 8-line boundary in
+ * max(b, t - 16) .. min(t, b + 16), the two showing blank rows there; of those
+ * the one shared with the most other switches (fewer H-ints) */
+typedef struct { u8 line, cols; u16 v; } FmEv;    /* cols: first << 4 | last column */
+FmEv fm_ev[FM_EV], act_fm_ev[FM_EV + 1];   /* (act_fm_ev: then a line 0xFF, src/xsp_fast.s _hint) */
+u8 fm_nev, act_fm_nev, act_fm_on, fm_evi;
+extern u8 hint_nx;
+extern u16 hint_r1;
+static u8 fm_on;
+static u8 fm_n, fm_ix[FM_MAX];          /* the frame's units: call indices (B15 / B16 calls) */
+static s8 fm_img[FM_MAX];
+typedef struct { u32 k; u16 c; } FmRect;  /* a unit written: img, r0, nr, row, base; columns lo << 8 | hi */
+static FmRect fm_old[FM_MAX];           /* (the units in the window: only those that change rewritten) */
+static u8 fm_nold;
 static u16 img_prio(s8 img)
 {
     return (u8)(img - IMG_O216) < 10 ? 0x8000 : 0;
@@ -266,7 +292,7 @@ static s8 o200_pose(const Call *c, u16 i, u16 *a);
 static u8 o20f_parts(const Call *c, u16 i, u16 *a);
 
 static void ship_drop_shown(void);
-static u8 o210_ix[6], o210_n;           /* the stage 6 boss's calls in its image */
+static u8 o210_ix[8], o210_n;           /* the stage 6 boss's calls in its image */
 static void drop_image_calls(s8 img, Call *c)
 {
 #ifdef PLANE_KEEP
@@ -713,6 +739,15 @@ static s8 o210_image(const Call *c, u16 i)
             img = IMG_O210 + 2;
         }
     }
+    if ((u8)(img - (IMG_O210 + 3)) < 2 && (u8)(shown - IMG_O210) < 7 && plane_img[shown].group == loaded) {
+        /* $B53 alone / $B54: the animation from one form to the next, cut (no
+         * reloading: the form shown kept, the parts moving about hidden) */
+        u16 j = i > 8 ? i - 8 : 0, e = i + 12u < ncalls ? i + 12 : ncalls;
+        for (; j < e && o210_n < sizeof(o210_ix); j++)
+            if ((u16)(calls[j].id - (REF_O210 + 6)) <= 1 && j != i)
+                o210_ix[o210_n++] = j;
+        img = shown;
+    }
     return img;
 }
 
@@ -783,6 +818,244 @@ static void ship_drop_shown(void)
         ship_drop(&ship[shown_ship]);
 }
 
+/* formation mode: the units placed (in the order of their tops: those
+ * sharing a 2-cell column with one placed above it need a gap holding an
+ * 8-line boundary below it, the line of the switch; plane rows 0..31, a
+ * free row between two units of a column), their rows written when the
+ * layout changes, the VSRAM events, their calls dropped */
+#ifdef FM_DEBUG
+u32 fm_stat[4];                         /* (debug) units, placed, why not: column gap, rows / events */
+#endif
+typedef struct {                        /* (a unit, in fm_write) */
+    const PlaneImg *im;
+    s16 x, y;                           /* its image's top left */
+    s8 img;
+    u8 ix, r0, nr, pr;                  /* (fm_ix, the rows on screen, in the window) */
+    s8 base;                            /* (its first column in the window) */
+} FmU;
+static void fm_write(void)
+{
+    FmU u[FM_MAX], *ord[FM_MAX], *cu[FM_MAX];
+    FmRect cur[FM_MAX];
+    FmEv ev[FM_EV];
+    u8 lb[16], rn[16];                  /* per column: the bottom of the unit last placed (0: none), */
+                                        /* the next free row (2 blank rows apart) */
+    u8 emin[FM_EV];
+    u16 n = fm_n, k, j, nev = 0, nn = 0;
+    s16 f;
+    u32 rows = 0, ch = 0;               /* (the rows of the units now, the rows changed) */
+    for (k = 0; k < n; k++) {           /* (by their tops: insertion) */
+        FmU *p = &u[k];
+        const Call *cl = &calls[fm_ix[k]];
+        p->img = fm_img[k]; p->im = &plane_img[p->img]; p->ix = k;
+        p->x = (cl->x >> 6) + p->im->ox; p->y = (cl->y >> 6) + p->im->oy;
+        for (j = k; j > 0 && ord[j - 1]->y > p->y; j--)
+            ord[j] = ord[j - 1];
+        ord[j] = p;
+    }
+    ((u32 *)lb)[0] = 0; ((u32 *)lb)[1] = 0; ((u32 *)lb)[2] = 0; ((u32 *)lb)[3] = 0;
+    ((u32 *)rn)[0] = 0; ((u32 *)rn)[1] = 0; ((u32 *)rn)[2] = 0; ((u32 *)rn)[3] = 0;
+    f = ord[0]->x & 7;                  /* (one horizontal scroll: the fine part of the first) */
+    for (j = 0; j < n; j++) {
+        FmU *p = ord[j];
+        const PlaneImg *im = p->im;
+        s16 xa = p->x, xb = xa + im->w * 8 - 1, ya = p->y, top, h = im->h, rr = 0, hp;
+        u16 cc, ca, cb, ne = 0, pl = 0xFF, R = 0;
+        p->ix |= 0x80;                  /* (not placed) */
+        if (ya < 0)
+            rr = (-ya + 7) >> 3;
+        if (ya + h * 8 > 224)
+            h = (224 - ya + 7) >> 3;
+        if (xb < 0 || xa > 255 || h <= rr)
+            continue;
+        top = ya + rr * 8;
+        ca = xa < 0 ? 0 : xa >> 4;
+        cb = xb > 255 ? 15 : xb >> 4;
+        for (cc = ca; cc <= cb; cc++) { /* (the one above in each column: the gap, the rows) */
+            u16 l = lb[cc];
+            if (l) {                    /* (a line to switch at between the two) */
+                s16 lo = top - 16, hi = l + 16;
+                if (lo < (s16)l) lo = l;
+                if (hi > top) hi = top;
+                if (((lo + 7) & ~7) > hi)
+                    break;
+            }
+            if (rn[cc] > R)
+                R = rn[cc];
+            if (l != pl)
+                ne++;
+            pl = l;
+        }
+        if (cc <= cb || R + h > 32 || nev + ne > FM_EV) {
+#ifdef FM_DEBUG
+            fm_stat[cc <= cb ? 2 : 3]++;
+#endif
+            continue;                   /* (not placed: sprites) */
+        }
+        p->ix &= 0x7F;
+        p->r0 = rr; p->nr = h - rr;
+        p->pr = R + rr;                 /* (its rows as unclipped at the top: those below */
+                                        /* kept while it scrolls in) */
+        p->base = (xa - f + 4) >> 3;
+        {
+            u16 v = (u16)(R * 8 - ya) & 511;
+            u8 bl = top + (h - rr) * 8, re = R + h + 2;
+            pl = 0xFFFF;
+            for (cc = ca; cc <= cb; cc++) {
+                u16 l = lb[cc];
+                if (l == pl)
+                    ev[nev - 1].cols++;     /* (the run goes on: last column + 1) */
+                else {                  /* (the line: the latest it may be, the first in emin) */
+                    s16 lo = top - 16, hi = l + 16;
+                    if (lo < (s16)l) lo = l;
+                    if (hi > top) hi = top;
+                    if (!l)
+                        lo = hi = 0;
+                    ev[nev].line = hi & ~7; emin[nev] = (lo + 7) & ~7;
+                    ev[nev].cols = cc << 4 | cc; ev[nev].v = v;
+                    nev++;
+                }
+                pl = l;
+                lb[cc] = bl; rn[cc] = re;
+            }
+        }
+        hp = p->base * 8 + f;           /* (the columns fully on screen: src/plane.c visible_cols) */
+        {
+            s16 lo = (7 - hp) >> 3, hi = (248 - hp) >> 3;
+            if (lo < 0) lo = 0;
+            if (hi > im->w - 1) hi = im->w - 1;
+            if (lo <= hi) {
+                cur[nn].k = (u32)(u8)p->img << 24 | (u32)p->r0 << 19 | (u32)p->nr << 13
+                            | (u32)p->pr << 8 | (u8)p->base;
+                cur[nn].c = lo << 8 | hi;
+                cu[nn] = p;
+                rows |= ROWS_MASK(p->nr) << p->pr;
+                nn++;
+            }
+        }
+    }
+#ifdef FM_DEBUG
+    for (k = 0; k < n; k++) {
+        fm_stat[0]++;
+        fm_stat[1] += !(u[k].ix & 0x80);
+    }
+#endif
+    for (k = 1; k < nev; k++) {         /* (by line: insertion) */
+        FmEv e = ev[k];
+        u8 m = emin[k];
+        for (j = k; j > 0 && ev[j - 1].line > e.line; j--) {
+            ev[j] = ev[j - 1]; emin[j] = emin[j - 1];
+        }
+        ev[j] = e; emin[j] = m;
+    }
+    {                                   /* (as few lines as can be: one H-int for several) */
+        u8 cur = 0;
+        for (k = 0; k < nev; k++) {
+            if (cur < emin[k])
+                cur = ev[k].line;
+            fm_ev[k].line = cur;
+            fm_ev[k].cols = ev[k].cols; fm_ev[k].v = ev[k].v;
+        }
+    }
+    fm_nev = nev;
+    hs = f;
+    if (st_img != IMG_FM) {             /* (from another mode: all rewritten) */
+        clear_win_rows();
+        ch = vram_nz[0];
+        fm_nold = 0;
+    }
+    for (k = 0; k < fm_nold; k++) {     /* (those gone or moved: cleared) */
+        FmRect *q = &fm_old[k];
+        if (k < nn && cur[k].k == q->k && cur[k].c == q->c) {
+            cur[k].c |= 0x8000;         /* (as it was: left) */
+            continue;
+        }
+        for (j = 0; j < nn; j++)
+            if (cur[j].k == q->k && cur[j].c == q->c)
+                break;
+        if (j < nn) {
+            cur[j].c |= 0x8000;
+            continue;
+        }
+        {
+            u16 r = (u16)(q->k >> 8) & 31, e = r + ((u16)(q->k >> 13) & 63), b = (u8)q->k;
+            u16 lo = q->c >> 8, cnt = (u8)q->c - lo;
+            ch |= ROWS_MASK(e - r) << r;
+            for (; r < e; r++) {
+                u16 *d = win[r], cc = lo + b, i = cnt;
+                do {
+                    d[cc & 31] = 0;
+                    cc++;
+                } while (i--);
+            }
+        }
+    }
+    for (j = 0; j < nn; j++) {          /* (the new ones: written) */
+        const FmU *p = cu[j];
+        const PlaneImg *im;
+        const u16 *m;
+        u16 attr, r, w, lo, cnt;
+        if (cur[j].c & 0x8000) {
+            cur[j].c &= 0x7FFF;
+            continue;
+        }
+        im = p->im;
+        attr = (((u16)im->pal << 13) | img_prio(p->img)) + tbase - 1;
+#ifdef FM_DEBUG
+        attr &= 0x1FFF;                 /* (debug: in the BG palette, to tell them) */
+#endif
+        lo = cur[j].c >> 8; cnt = (u8)cur[j].c - lo; w = im->w;
+        m = plane_map + im->map + p->r0 * w + lo;
+        for (r = 0; r < p->nr; r++, m += w) {
+            u16 *d = win[p->pr + r];
+            const u16 *s = m;
+            u16 cc = lo + (u8)p->base, i = cnt;
+            do {
+                u16 t = *s++;
+                d[cc & 31] = t ? attr + t : 0;
+                cc++;
+            } while (i--);
+        }
+        ch |= ROWS_MASK(p->nr) << p->pr;
+    }
+    for (j = 0; j < nn; j++)
+        fm_old[j] = cur[j];
+    fm_nold = nn;
+    win_nz = rows;
+    wr_n = 0;
+    {
+        u32 v = ch;
+        u16 pp;
+        for (pp = 0; v; v >>= 1, pp++)
+            if (v & 1) {
+                wr_row[wr_n] = pp;
+                wr_win[wr_n] = rows >> pp & 1 ? pp : 0xFF;
+                wr_n++;
+            }
+        for (v = vram_nz[1], pp = 32; v; v >>= 1, pp++)
+            if (v & 1) {
+                wr_row[wr_n] = pp;
+                wr_win[wr_n] = 0xFF;
+                wr_n++;
+            }
+    }
+    vram_nz[0] = rows;
+    vram_nz[1] = 0;
+    st_img = IMG_FM; st_img2 = -1; st_cols = 0;
+    for (k = 0; k < n; k++) {           /* (a hit flash stays a sprite, over it) */
+        Call *cl;
+        if (u[k].ix & 0x80)
+            continue;
+        cl = &calls[fm_ix[k]];
+        if (pal_of(cl) == 6) {
+            cl->id = EMPTY_REF;
+            if (u[k].img != IMG_FM) {
+                cl[-1].id = EMPTY_REF; cl[-2].id = EMPTY_REF;
+            }
+        }
+    }
+}
+
 void plane_frame(void)
 {
     s16 best = -1, bd = 0x7FFF, top;
@@ -796,6 +1069,7 @@ void plane_frame(void)
     s16 big2 = -1, big2v = -1;
     Call *c;
     nship = 0;
+    fm_n = 0;
     /* the calls xobj_set noted (src/xsp_fast.s): the large enemy, the effects */
     for (k = 0; k < pl_n; k++) {
         u16 id;
@@ -831,6 +1105,23 @@ void plane_frame(void)
             img = o210_image(c, i);
             boss_seen = 1;
             continue;
+        }
+        if (fm_n < FM_MAX && (pal_of(c) == 6 || pal_of(c) >= 14)) {   /* (hit flash: kept) */
+            if (id == REF_F15) {
+                fm_ix[fm_n] = i; fm_img[fm_n++] = IMG_FM;
+                continue;
+            }
+            if (id == REF_O1A1 && i >= 2 && c[-2].id == REF_O1A1 + 1 && c[-1].id == REF_O1A1 + 1
+                && (c[-1].info & 0x4000)) {
+                /* the pods 16 + s px either side, s px up (s 1..12, the spawner's $6E):
+                 * the image of the nearest even s */
+                s16 sp = (c->x >> 6) - (c[-2].x >> 6) - 16;
+                if ((u16)(sp - 1) < 12 && (c[-1].x >> 6) - (c->x >> 6) == sp + 16
+                    && (c->y >> 6) - (c[-2].y >> 6) == sp && c[-1].y == c[-2].y) {
+                    fm_ix[fm_n] = i;
+                    fm_img[fm_n++] = sp >= 11 ? IMG_FM + 1 : IMG_FM + 1 + ((sp + 1) >> 1);
+                }
+            }
         }
         if ((u16)(id - REF_SHIP) <= 2) {
             ship_add(c, i);             /* (the ships: after this loop) */
@@ -934,6 +1225,14 @@ void plane_frame(void)
                                         /* explosions stay sprites (composited into its tiles */
                                         /* on plane A: some 140 lines a frame) */
     xsp_pairs(big);                     /* a boss / mid boss about: its lasers paired */
+    fm_on = 0;
+#ifndef NO_FM
+    if (fm_n >= 2 && (best < 0 || img == IMG_O1A1) && !fx && !was_fx && bg_on) {
+        best = fm_ix[0];                /* (formation mode: the group loaded as for an image) */
+        img = fm_img[0];
+        fm_on = 1;
+    }
+#endif
     if (best >= 0) {
         u8 g = plane_img[img].group;
         if (loaded != g) {
@@ -1063,6 +1362,23 @@ void plane_frame(void)
             return;
         }
         text_on_plane = 0;
+        if (fm_on && img >= 0) {
+#ifdef TEST_LINES
+            {
+                extern u32 lines_fm;
+                u8 v0, v1;
+                __asm__ volatile("move.w #0x2700,%%sr" ::: "cc");
+                v0 = *(volatile u8 *)0xC00008;
+                fm_write();
+                v1 = *(volatile u8 *)0xC00008;
+                __asm__ volatile("move.w #0x2300,%%sr" ::: "cc");
+                lines_fm += (u8)(v1 - v0);
+            }
+#else
+            fm_write();
+#endif
+            return;
+        }
         if (colmode) {
             /* the left one and the right one; one horizontal scroll for both:
              * the fine part splits the difference (2 px off at most) */
@@ -1285,13 +1601,42 @@ void plane_upload(void)
     act_hs = hs; act_vs = vs;
     act_hs2 = hs2; act_vs2 = vs2; act_split = split;
     act_colmode = colmode; act_vsr = vsr; act_colk = colk;
+    act_fm_on = fm_on;
+    if (fm_on) {
+        for (i = 0; i < fm_nev; i++)
+            act_fm_ev[i] = fm_ev[i];
+#ifdef NO_FMHINT
+        act_fm_nev = 0;
+#else
+        act_fm_nev = fm_nev;
+#endif
+    } else
+        act_fm_nev = 0;
 }
 
 /* every VBlank: plane A's scroll at the top of the frame shown, the H-int
  * for its split (src/xsp_fast.s _hint) and the sprite doubler */
 void plane_vblank(void)
 {
-    if (act_colmode) {                  /* 2-cell column scroll: plane A by column, B all alike */
+    fm_evi = 0;
+    act_fm_ev[act_fm_nev].line = 0xFF;  /* (the end, for src/xsp_fast.s _hint) */
+    if (act_fm_on) {                    /* formation mode: by column, from the events at line 0 */
+        u8 k;
+        vdp_set_reg(11, 0x04);
+        VDP_CTRL32 = VSRAM_W(0);
+        for (k = 0; k < 16; k++) {
+            VDP_DATA = 0;
+            VDP_DATA = bg_vs & 511;
+        }
+        for (k = 0; k < act_fm_nev && !act_fm_ev[k].line; k++) {
+            u8 c;
+            for (c = act_fm_ev[k].cols >> 4; c <= (act_fm_ev[k].cols & 15); c++) {
+                VDP_CTRL32 = VSRAM_W(c * 4);
+                VDP_DATA = act_fm_ev[k].v;
+            }
+        }
+        fm_evi = k;
+    } else if (act_colmode) {                  /* 2-cell column scroll: plane A by column, B all alike */
         u8 k;
         vdp_set_reg(11, 0x04);
         VDP_CTRL32 = VSRAM_W(0);
@@ -1313,6 +1658,26 @@ void plane_vblank(void)
     split_vs = act_vs2 & 511;
     split_hs = act_hs2;
     split_line = act_split;
-    vdp_set_reg(10, act_split ? 8 - 1 : 96 - 1);   /* (every 8 lines; DBL_A) */
-    vdp_set_reg(0, act_split || act_n ? 0x14 : 0x04);
+    {                                   /* the H-int: the first at the first line with */
+        u16 t0 = 0x100, t1 = 0x100, l;  /* something to do (src/xsp_fast.s _hint) or */
+        u8 k;                           /* halfway, the second there (register 10 is */
+        if (act_split)                  /* taken at each H-int: _hint sets the one */
+            t0 = act_split;             /* after the next) */
+        if (act_n) {
+            l = 96;                     /* (DBL_A) */
+            if (l < t0) { t1 = t0; t0 = l; } else if (l > t0 && l < t1) t1 = l;
+        }
+        for (k = fm_evi; act_fm_ev[k].line != 0xFF && act_fm_ev[k].line <= t1; k++) {
+            l = act_fm_ev[k].line;
+            if (l < t0) { t1 = t0; t0 = l; } else if (l > t0 && l < t1) t1 = l;
+        }
+        hint_nx = 0;
+        hint_r1 = t1 >= 2 * t0 ? t0 : (t0 >> 1) & ~7;
+        if (hint_r1 < 8)
+            hint_r1 = 8;
+        if (hint_r1 > 248)
+            hint_r1 = 248;
+        vdp_set_reg(10, hint_r1 - 1);
+        vdp_set_reg(0, t0 < 0x100 ? 0x14 : 0x04);
+    }
 }

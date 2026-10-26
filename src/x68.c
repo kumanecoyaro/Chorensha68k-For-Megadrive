@@ -124,6 +124,38 @@ u16 stamp(void)
 #define PROBE(k)
 #endif
 
+/* type $1A1 unit u (obj1a0: the stage 3 formations), spawner p, just placed
+ * at its path point (src/hooks.s h_o1a1_y): every other unit (by its spawn
+ * order, $4C / 64) 64 px lower while the path runs across, so that a row of
+ * them (64 px apart: 88 px wide, overlapping) shows on plane A in two bands
+ * split by the H-int (src/plane.c); none where it runs up or down (a column:
+ * 64 px apart already), in between in proportion */
+void o1a1_shift(u8 *u, const u8 *p)
+{
+    const s16 *path = (const s16 *)OADDR(0x904fc);
+    s16 lo = *(s16 *)(u + 0x4e), hi = *(s16 *)(u + 0x50) - 1;
+    s16 t = *(s16 *)(p + 0x4c) + *(s16 *)(u + 0x4c), a, b, dx, dy;
+    u16 m = *(u16 *)(u + 0x72) & 0xC000, w;
+    if (!((*(u16 *)(u + 0x4c) >> 6) & 1))
+        return;
+    if (m == 0x8000 || m == 0xC000)     /* (the path run backwards: the index mirrored) */
+        t = lo + hi + 1 - t;
+    a = t - 16 < lo ? lo : t - 16;
+    b = t + 16 > hi ? hi : t + 16;
+    if (b <= a)
+        return;
+    dx = path[b * 2] - path[a * 2];
+    dy = path[b * 2 + 1] - path[a * 2 + 1];
+    if (dx < 0) dx = -dx;
+    if (dy < 0) dy = -dy;
+    if (dx <= 2 * dy)
+        return;
+    w = dx >= 4 * dy ? 64 : (u16)divs(muls(dx - 2 * dy, 32), dy);    /* (0..64) */
+    if (w > 64)
+        w = 64;
+    *(s16 *)(u + 2) += w * 64;          /* (1/64 px: w px) */
+}
+
 long x_vsync(long n)
 {
     long waited = 0;
