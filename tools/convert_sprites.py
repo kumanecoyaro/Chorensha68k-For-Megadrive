@@ -52,11 +52,11 @@ PLANE_GROUPS = [
     [   # stage 2 mid boss obj200 (type $200, two of them, palettes 8 / 7): body $B18, arms
         # $B19 / $B1A either side (the right ones mirrored), closed: 48 / 56 px out (the
         # usual pose); the body alone (the arms moving / open stay sprites)
+        # (both palettes in one group: the same tiles, and the two show together,
+        # src/plane.c PAIR_IMG)
         [('obj200', 0, 0, 8), ('obj200', 1, -48, 8, -32), ('obj200', 1, 48, 8, -32, 1),
          ('obj200', 2, -56, 8, 8), ('obj200', 2, 56, 8, 8, 1)],
         [('obj200', 0, 0, 8)],
-    ],
-    [
         [('obj200', 0, 0, 7), ('obj200', 1, -48, 7, -32), ('obj200', 1, 48, 7, -32, 1),
          ('obj200', 2, -56, 7, 8), ('obj200', 2, 56, 7, 8, 1)],
         [('obj200', 0, 0, 7)],

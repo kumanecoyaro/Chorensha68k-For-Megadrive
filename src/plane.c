@@ -575,18 +575,20 @@ static u8 on_screen(const Call *c, s8 img)
     return x < 256 && x + im->w * 8 > 0 && y < 224 && y + im->h * 8 > 0;
 }
 
-/* large enemies coming two at a time (the stage 5 battleships, the type $1F0
- * large enemy, obj21f): the second one on plane A too, side by side (2-cell
+/* large enemies coming two at a time (the stage 5 battleships, the stage 2
+ * mid boss obj200 (palettes 8 / 7), the type $1F0 large enemy, obj21f): the second one on plane A too, side by side (2-cell
  * column scroll, colmode) or one above the other (the H-int split) */
 #define PAIR_IMG(m) ((u8)((m) - IMG_O21A) < 2 || (m) == IMG_O1F0 || (u8)((m) - 3) < 2 \
-                     || (u8)((m) - IMG_O21F9) < 2)
+                     || (u8)((m) - IMG_O21F9) < 2 || (u8)((m) - IMG_O200) < 4)
 static s8 pair_img(const Call *c)       /* (of a call in big_ix, the image it has) */
 {
     u16 id = c->id;
     if ((u16)(id - REF_O21A) <= 1)
         return IMG_O21A + (id - REF_O21A);
-    if (id == REF_O200)
-        return IMG_O1F0;
+    if (id == REF_O200) {
+        s8 m = o200_image(c, c - calls);    /* (palette 9: IMG_O1F0) */
+        return m >= 0 ? m : IMG_O1F0;
+    }
     return ((u8)(shown - IMG_O21F9) < 2 || pal_of(c) == 9 ? IMG_O21F9 : 3) + (id - REF_O21F);
 }
 
