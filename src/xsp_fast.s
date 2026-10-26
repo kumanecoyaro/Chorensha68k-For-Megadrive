@@ -129,7 +129,7 @@ h_xsp_set_main:
     beq     30f
     bra.s   29f
 28: cmp.w   #NEEDLE_PCG, %d2            | the stage 3 boss's needle streams (palette 1):
-    bne.s   26f                         | two side by side as one sprite (pair_lut row 16)
+    bne.s   29f                         | two side by side as one sprite (pair_lut row 16)
     move.l  %d0, -(%sp)
     move.w  %d3, %d0
     and.w   #0x0F00, %d0
@@ -138,10 +138,6 @@ h_xsp_set_main:
     bne.s   29f
     st      needle_try
     bra     20f
-26: cmp.w   #TURRET_HI, %d2             | the stage 5 battleship's turrets (palette 6):
-    bhi.s   29f                         | the twin barrels come one after the other,
-    cmp.w   #TURRET_LO, %d2             | as one pre-composited sprite (pair_lut rows
-    bcc     70f                         | TURRET_ROW..)
 29:
 xsp_set_rec:
     move.l  %d4, -(%sp)                | (only d0 / a0 are free)
@@ -324,22 +320,25 @@ pr_map:
     sf      needle_try
     bra     xsp_set_rec
 
-| a turret's second barrel: the same PCG and info as the turret call just
-| before it (last_tur, a call of this frame), within 16 px: that call becomes
-| the pair's ref and this one is not recorded
-70: movem.l %d4-%d7/%a1, -(%sp)
-    move.w  last_tur, %d5
-    cmp.w   ncalls, %d5
-    bcc     78f                         | (none: -1)
-    lsl.w   #3, %d5
+| a turret's second barrel (the original's call sites: tools/relocate.py
+| TURRET_PAIR2): the same PCG and info as the call just recorded (the first
+| one), within 16 px: that call becomes the pair's ref (pair_lut rows
+| TURRET_ROW..), this one is not recorded
+    .globl  h_xsp_set_tur2
+h_xsp_set_tur2:
+    movem.l %d4-%d6/%a1, -(%sp)
+    move.w  ncalls, %d4
+    beq     78f
+    subq.w  #1, %d4
+    lsl.w   #3, %d4
     lea     calls, %a1
-    add.w   %d5, %a1
-    move.w  %d2, %d5
-    bset    #15, %d5
-    cmp.w   4(%a1), %d5                 | the same PCG
-    bne     78f
+    add.w   %d4, %a1
+    move.w  %d2, %d4
+    bset    #15, %d4
+    cmp.w   4(%a1), %d4                 | the same PCG
+    bne    78f
     cmp.w   6(%a1), %d3                 | the same info
-    bne     78f
+    bne    78f
     move.w  (%a1), %d5
     asr.w   #6, %d5
     move.w  %d0, %d6
@@ -347,7 +346,7 @@ pr_map:
     sub.w   %d5, %d6
     add.w   #16, %d6                    | dx + 16 in 0..32
     cmp.w   #32, %d6
-    bhi     78f
+    bhi    78f
     move.w  2(%a1), %d5
     asr.w   #6, %d5
     move.w  %d1, %d4
@@ -355,7 +354,7 @@ pr_map:
     sub.w   %d5, %d4
     add.w   #16, %d4                    | dy + 16 in 0..32
     cmp.w   #32, %d4
-    bhi.s   78f
+    bhi    78f
     tst.w   %d3
     bpl.s   72f
     neg.w   %d4                         | (V flip)
@@ -365,27 +364,29 @@ pr_map:
     neg.w   %d6                         | (H flip)
     add.w   #32, %d6
 73: move.w  %d2, %d5
+    sub.w   #TURRET_LO, %d5
+    cmp.w   #TURRET_HI - TURRET_LO, %d5
+    bhi    78f
     add.w   %d5, %d5
-    lea     turret_rows - 2 * TURRET_LO, %a0
-    moveq   #0, %d7
-    move.w  0(%a0,%d5.w), %d7           | row * 33 * 33
-    add.w   %d6, %d7
+    lea     turret_rows, %a0
+    move.w  0(%a0,%d5.w), %d5           | row * 33 * 33
+    add.w   %d6, %d5
     add.w   %d4, %d4
     lea     mul33x2, %a0
-    add.w   0(%a0,%d4.w), %d7           | + (dy + 16) * 33 + dx + 16
-    add.l   %d7, %d7                    | (< $10000)
+    add.w   0(%a0,%d4.w), %d5           | + (dy + 16) * 33 + dx + 16
+    moveq   #0, %d6
+    move.w  %d5, %d6
+    add.l   %d6, %d6
     lea     pair_lut, %a0
-    move.w  0(%a0,%d7.l), %d5
-    beq.s   78f
+    move.w  0(%a0,%d6.l), %d5
+    beq    78f
     add.w   #PAIR_REF - 1, %d5
     move.w  %d5, 4(%a1)
-    move.w  #-1, last_tur
-    movem.l (%sp)+, %d4-%d7/%a1
+    movem.l (%sp)+, %d4-%d6/%a1
     moveq   #1, %d0
     rts
-78: move.w  ncalls, last_tur            | (the index this call gets)
-    movem.l (%sp)+, %d4-%d7/%a1
-    bra     xsp_set_rec
+78: movem.l (%sp)+, %d4-%d6/%a1
+    jmp     xsp_set_vec
 turret_rows:
     .irp    r, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17
     .word   (TURRET_ROW + \r) * 33 * 33
@@ -814,7 +815,100 @@ xsp_build:
     bra     16b
 
 | -- composite ref
-30: move.w  (%a3), %d0
+| -- the synthetic pairs (one piece each: turret barrels, angled lasers;
+| not the needles, enemy bullets: the general path's doubler): a single PCG's
+| work, without the effect / share checks
+30: cmp.w   #PAIR_REF, %d2
+    bcs    64f
+    cmp.w   #LBEAM_REF, %d2
+    bcc    64f
+    cmp.w   #BULLET_PR, 2(%sp)
+    beq    64f
+    add.w   %d2, %d2
+    lea     ref_start, %a1
+    moveq   #0, %d0
+    move.w  0(%a1,%d2.w), %d0
+    lsl.l   #3, %d0
+    lea     ref_pieces, %a1
+    add.l   %d0, %a1
+    move.w  (%a1)+, %d0                 | dx
+    move.w  (%a1)+, %d1                 | dy
+    moveq   #0, %d2
+    move.b  (%a1)+, %d2                 | size | flips << 4
+    moveq   #0, %d3
+    move.b  (%a1)+, %d3                 | palette xor
+    move.w  (%a1), %d4                  | block
+    move.w  6(%a3), %d6                 | info
+    bpl.s   61f
+    move.w  %d2, %d5                    | V flip: mirror around the centre
+    and.w   #15, %d5
+    add.w   %d5, %d5
+    neg.w   %d1
+    sub.w   #16, %d1
+    lea     size_h, %a1
+    sub.w   0(%a1,%d5.w), %d1
+    eor.w   #0x20, %d2
+61: btst    #14, %d6
+    beq.s   62f
+    move.w  %d2, %d5                    | H flip
+    and.w   #15, %d5
+    add.w   %d5, %d5
+    neg.w   %d0
+    sub.w   #16, %d0
+    lea     size_w, %a1
+    sub.w   0(%a1,%d5.w), %d0
+    eor.w   #0x10, %d2
+62: move.w  (%a3), %d5
+    asr.w   #6, %d5
+    add.w   %d5, %d0                    | sx
+    move.w  %d0, %d5
+    add.w   #32, %d5
+    cmp.w   #288, %d5                   | -32 < sx < 256
+    bcc     70f
+    move.w  2(%a3), %d5
+    asr.w   #6, %d5
+    add.w   %d5, %d1                    | sy
+    move.w  %d1, %d5
+    add.w   #32, %d5
+    cmp.w   #256, %d5                   | -32 < sy < 224
+    bcc     70f
+    lsr.w   #8, %d6
+    eor.w   %d6, %d3
+    and.w   #15, %d3                    | palette
+    lsl.w   #4, %d4
+    or.w    %d3, %d4                    | key
+    move.w  %d4, %d5
+    lsr.w   #7, %d5
+    eor.w   %d4, %d5
+    and.w   #511, %d5
+    lsl.w   #3, %d5
+    cmp.w   0(%a4,%d5.w), %d4
+    beq.s   63f
+    bsr     lookup_slow                 | (d4 = the tile)
+    beq     70f
+    bra.s   65f
+63: move.w  %a2, 4(%a4,%d5.w)
+    move.w  2(%a4,%d5.w), %d4
+65: add.w   %d3, %d3
+    lea     pal_attr, %a1
+    or.w    0(%a1,%d3.w), %d4
+    move.w  %d2, %d5
+    and.w   #0x30, %d5
+    lsl.w   #7, %d5                     | flips -> attr bits 11/12
+    or.w    %d5, %d4
+    and.w   #15, %d2
+    lsl.w   #8, %d2
+    add.w   #128, %d1
+    move.w  %d1, (%a0)+
+    addq.w  #1, %d7
+    or.w    %d7, %d2                    | size | link
+    move.w  %d2, (%a0)+
+    move.w  %d4, (%a0)+
+    add.w   #128, %d0
+    move.w  %d0, (%a0)+
+    bra     70f
+| -- a ref
+64: move.w  (%a3), %d0
     asr.w   #6, %d0
     move.w  %d0, %a5                    | px
     move.w  2(%a3), %d0
@@ -1375,7 +1469,6 @@ dbl_b:       .space DBL_MAX * 8
 dbl_slot:    .space DBL_MAX
     .balign 2
     .globl  act_n, hint_n, act_slot, act_b, act_a, split_line, split_vs, split_hs
-last_tur:    .word 0                    | h_xsp_set_main: the last turret call (the first barrel)
 needle_try:  .byte 0                    | h_xsp_set_main: a needle pair being looked for
     .balign 2
 split_line:  .word 0                    | plane A split for the frame shown (_hint):

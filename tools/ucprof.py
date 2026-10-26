@@ -2,6 +2,7 @@
 """Fast profile of the Mega Drive ROM on unicorn's 68000 (a lean tools/uctrace.py).
 
 usage: ucprof.py game.elf ROM.bin --range A,B [--pad HEX] [--hot FN] [--fn FN] [--save FILE]
+                 [--callers FN [--d2 LO,HI]]
 
 Counts executed bytes per basic block (a block hook, not one Python call per
 instruction: some 20x faster than uctrace --profile) over the game frames
@@ -62,7 +63,12 @@ def main():
 
     fn_addr = sym.get(arg('--fn', ''), None)       # --fn FN: bytes per call of FN (callees included)
     fn_pend = []; fn_calls = []
+    cl_addr = sym.get(arg('--callers', ''), None)  # --callers FN [--d2 LO,HI]: who calls FN (d2 in LO..HI)
+    cl_d2 = [int(v, 0) for v in arg('--d2', '0,0xFFFF').split(',')]
+    callers = collections.Counter()
     def block(uc, addr, size, ud):
+        if addr == cl_addr and lo <= st['gf'] <= hi and cl_d2[0] <= uc.reg_read(UC_M68K_REG_D2) & 0xFFFF <= cl_d2[1]:
+            callers[struct.unpack('>I', uc.mem_read(uc.reg_read(UC_M68K_REG_A7), 4))[0]] += 1
         if fn_pend and addr == fn_pend[-1][0] and uc.reg_read(UC_M68K_REG_A7) == fn_pend[-1][1]:
             r_, s_, n0 = fn_pend.pop()
             if lo <= st['gf'] <= hi:
@@ -161,6 +167,8 @@ def main():
     print(f'game frames {lo}..{hi}, {st["vbl"]} vblanks, {tot} bytes executed in the range')
     for n, c in byname.most_common(int(arg('--top', '40'))):
         print(f'{c * 100 / tot:6.2f}% {n}')
+    for a, c in callers.most_common(20):
+        print(f'--callers: {c} from {a:#x} {name(a)}')
     if fn_calls:
         v = sorted(fn_calls)
         print(f'--fn: {len(v)} calls, bytes per call median {v[len(v) // 2]} p90 {v[len(v) * 9 // 10]} mean {sum(v) // len(v)}')
