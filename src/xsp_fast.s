@@ -1438,16 +1438,15 @@ pair_put:
 
 | Level 4 H-int (src/plane.c plane_vblank: the first, at the latest at the
 | first line with something to do; then each H-int sets register 10 for the
-| one after the next: at the first line with something to do after that, 10:
-| below).  The line from the V counter (rounded to the 8-line boundary: a
+| one after the next: at the first line with something to do after that, 30:
+| below; in the H-blank before it).  The line from the V counter (+ 1: a
 | late H-int, held off while the VBlank handler or the sound masks it, does
 | its work late rather than not at all; it plans from the line it sees, so
 | the H-ints come no later than planned):
 | * split_line (0: none): plane A's scroll from that line on is split_vs /
 |   split_hs: the second image (the second of two battleships)
 | * act_fm_ev from fm_evi (formation mode, src/plane.c fm_ev; a line 0xFF
-|   after the last): the VSRAM values of the columns from the lines reached
-|   (columns 0xFF: plane A's horizontal scroll, for the next row of units)
+|   after the last): plane A's scroll for the next band of units
 | * DBL_A: the sprite doubler.  The bullets above line DBL_A have been
 |   shown: their slots in the sprite table take the bullets below DBL_B
 |   (xsp_upload sets act_*; hint_n is the count still to write this frame).
@@ -1462,8 +1461,7 @@ _hint:
     bcs     20f
     cmp.b   #0xE0, %d0                  | (in the VBlank: a stale H-int, H-int
     bcc     8f                          | just turned on)
-    addq.w  #4, %d0
-    and.w   #0xF8, %d0                  | the boundary just reached
+    addq.w  #1, %d0                     | the line about to be drawn
     movem.l %d1-%d4/%a0, -(%sp)
     tst.w   split_line
     beq.s   3f
@@ -1482,30 +1480,16 @@ _hint:
     add.w   %d2, %a0
     cmp.b   (%a0), %d0                  | (formation mode: the first one's line not
     bcs.s   6f                          | reached)
-    move.w  #0x8F04, 0xC00004           | (VSRAM: plane A's columns one after the other)
-5:  moveq   #0, %d2
-    move.b  1(%a0), %d2                 | columns first << 4 | last
-    cmp.b   #0xFF, %d2                  | (0xFF: plane A's horizontal scroll)
-    bne.s   11f
+5:  move.l  #0x40000010, 0xC00004       | (the next band: plane A's vertical scroll,
+    move.w  2(%a0), 0xC00000            | its horizontal scroll)
     move.l  #0x40000000 + ((VRAM_HSCROLL & 0x3FFF) << 16) + (VRAM_HSCROLL >> 14), 0xC00004
-    move.w  2(%a0), 0xC00000
-    bra.s   12f
-11: move.w  %d2, %d3
-    and.w   #15, %d3
-    lsr.w   #4, %d2
-    sub.w   %d2, %d3                    | (count - 1)
-    lsl.w   #2, %d2                     | VSRAM address column * 4
-    swap    %d2
-    or.l    #0x40000010, %d2
-    move.l  %d2, 0xC00004
-    move.w  2(%a0), %d2
-7:  move.w  %d2, 0xC00000
-    dbra    %d3, 7b
-12: addq.l  #4, %a0
+    moveq   #0, %d2
+    move.b  1(%a0), %d2
+    move.w  %d2, 0xC00000
+    addq.l  #4, %a0
     addq.b  #1, %d1
     cmp.b   (%a0), %d0
     bcc.s   5b
-    move.w  #0x8F02, 0xC00004
     move.b  %d1, fm_evi
 6:  tst.w   hint_n
     beq.s   30f
@@ -1530,7 +1514,8 @@ _hint:
     dbra    %d3, 2b
     movem.l (%sp)+, %a1-%a2
 | from line d0: the next line due (d1: hint_nx), the first line with
-| something to do after the next H-int (d2: register 10 for the reload there)
+| something to do after the next H-int (d2: register 10 for the reload there,
+| at the most 248 lines on)
 30: move.w  #0x100, %d1
     move.w  #0x100, %d2
     move.w  %d0, %d3
@@ -1577,7 +1562,7 @@ _hint:
     move.b  #0xFF, hint_nx              | nothing more this frame: the H-int off
     move.w  #0x8004, 0xC00004           | (src/plane.c plane_vblank turns it on)
     bra.s   9f
-1:  subq.w  #4, %d1                     | (4 lines early: the rounding above)
+1:  subq.w  #1, %d1                     | (the V counter: the line before)
     bcc.s   1f
     moveq   #0, %d1
 1:  move.b  %d1, hint_nx
@@ -1594,8 +1579,7 @@ _hint:
 9:  movem.l (%sp)+, %d1-%d4/%a0
 8:  move.l  (%sp)+, %d0
     rte
-20: addq.w  #4, %d0                     | (nothing due: only the planning)
-    and.w   #0xF8, %d0
+20: addq.w  #1, %d0                     | (nothing due: only the planning)
     movem.l %d1-%d4/%a0, -(%sp)
     bra     30b
 

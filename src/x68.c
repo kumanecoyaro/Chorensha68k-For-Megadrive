@@ -344,6 +344,14 @@ long x_pal_upload(void)
     pal_from_orig();
     ocall(OFN(0x05170), 0x10, 0, 0, 0);
     ocall(OFN(0x15ee8), 0, 0, 0, 0);
+    {                                   /* the second path ($336..$675: across the screen in */
+        s16 *path = (s16 *)OADDR(0x904fc);  /* an arc 22 px up) straight: the rows of units */
+        u16 t;                          /* on it level (src/plane.c fm_select: on plane A in */
+        for (t = 337; t < 676; t++) {   /* bands split by the H-int; 1 px a step: the units */
+            path[t * 2] = path[336 * 2] + (t - 336) * 64;   /* 64 steps apart exactly 64 px) */
+            path[t * 2 + 1] = path[336 * 2 + 1];
+        }
+    }
     return 0;
 }
 
