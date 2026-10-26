@@ -37,6 +37,8 @@ TEXT_XPAL = 2          # X68000 sprite palette used as the text palette
 # large enemies drawn on plane A (src/plane.c): groups of images (one group's
 # tiles are in VRAM at a time); image = refs (file, index, x offset, object
 # palette[, y offset, H flip]) composited in drawing order (later = front)
+# the stage 2 mid boss's arm poses (left side: upper arm x, y, lower arm x, y)
+O200_POSE = [(-48, -32, -56, 8), (-56, -36, -64, 12)]
 PLANE_GROUPS = [
     [   # obj202 crab: halves 0..4 px apart, as two images (0 and 4 px)
         [('obj202', 0, 0, 6), ('obj202', 1, 0, 6), ('obj202', 2, 0, 5)],
@@ -123,6 +125,17 @@ PLANE_GROUPS = [
         [('obj21f', 0, 0, 9)],
         [('obj21f', 1, 0, 9)],
     ],
+    [   # the stage 2 mid boss obj200 whole (palettes 8, 7): the body $B18 with its arms in
+        # closed or open each side (src/plane.c o200_pose: upper arm $B19, lower arm $B1A,
+        # the right ones mirrored; the cells on an 8 px grid from the body); IMG_O200P +
+        # palette (8: 0, 7: 4) + left pose * 2 + right pose
+        [('obj200', 0, 0, p),
+         ('obj200', 1, O200_POSE[li][0], p, O200_POSE[li][1]),
+         ('obj200', 1, -O200_POSE[ri][0], p, O200_POSE[ri][1], 1),
+         ('obj200', 2, O200_POSE[li][2], p, O200_POSE[li][3]),
+         ('obj200', 2, -O200_POSE[ri][2], p, O200_POSE[ri][3], 1)]
+        for p in (8, 7) for li in range(2) for ri in range(2)
+    ] + [[('obj200', 0, 0, 8)], [('obj200', 0, 0, 7)]],     # (+ 8 / 9: the body alone)
 ]
 BOMB_REFS = list(range(0xB6, 0xC0)) + list(range(0xAA9, 0xAAF))   # expl2 / expl3 / flare (src/plane.c is_effect)
 BOMB_PALS = (1, 3, 5, 12)  # X68000 palettes the bomb draws them with (info $x13F / $xC3F ...)
@@ -521,8 +534,9 @@ def main(xsp, out, sz2x=None):
                                 pix[(X + dx, ay - 16 + y + dy)] = lut[xp][v] & 15
             xs = [p[0] for p in pix]; ys = [p[1] for p in pix]
             ox, oy = min(xs), min(ys)
-            if parts[0][0] == 'obj20A':     # (the battleship: cells on an 8 px grid from the
-                ox &= ~7; oy &= ~7          # centre, so the mirrored wing reuses the tiles flipped)
+            if parts[0][0] in ('obj20A', 'obj200'):  # (cells on an 8 px grid from the centre: the
+                ox &= ~7; oy &= ~7          # battleship's mirrored wing reuses the tiles flipped,
+                                            # obj200's poses share the body's)
             w = (max(xs) - ox) // 8 + 1; h = (max(ys) - oy) // 8 + 1
             moff = len(pmaps)
             for ty in range(h):

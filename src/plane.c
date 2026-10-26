@@ -46,7 +46,7 @@ static u16 tbase = ENEMY_BASE;          /* VRAM tile of the loaded group's first
 #define REF_O21F   0xB79                /* obj21f, $B7A after it fires (images 3, 4) */
 #define REF_O200   0xB18                /* obj200: body, arm $B19 x2, arm $B1A x2 (right ones mirrored) */
 #define REF_O205   0xB2B                /* stage 2 boss obj205: $B2B..$B30 with pods, $B31 core */
-#define IMG_O200   5                    /* obj200 palette 8 arms closed, body alone; palette 7 the same */
+#define IMG_O200   5                    /* (unused: obj200's arms closed / body alone; now IMG_O200P) */
 #define IMG_O205   9                    /* core, then $B2B..$B30 */
 #define REF_O207   0xB34                /* stage 3 boss obj207: $B34..$B3B, second form $B3C / $B3D */
 #define IMG_O207   16                   /* $B34..$B3D */
@@ -64,6 +64,8 @@ static u16 tbase = ENEMY_BASE;          /* VRAM tile of the loaded group's first
 #define REF_O216   0xB5E                /* stage 5 boss obj216: body; parts $B5F..$B67 over it, arms $B68.. */
 #define IMG_O216   46                   /* the body alone, + k: with part $B5E + k (k 1..9) */
 #define REF_O210   0xB51                /* stage 6 boss obj210 (palette 3): $B51..$B54 drawn twice (mirrored), */
+#define IMG_O200P  65                   /* obj200 whole: + 4 * (palette 7) + left pose * 2 + right pose, */
+                                        /* + 8 / 9 the body alone (palette 8 / 7) */
 #define IMG_O21F9  63                   /* obj21f in palette 9 (stage 6; images 3 / 4: palette 7) */
 #define IMG_O210   56                   /* parts $B57 / $B58: $B51, $B52, $B52 + $B58, $B53, $B54, $B53 + $B57, $B55 */
 #define BOSS_IMG(m) ((m) == 2 || ((m) >= IMG_O205 && (m) < IMG_O1F0) || (u8)((m) - IMG_O216) < 10 \
@@ -258,7 +260,7 @@ static u8 put_ref(const Call *cl, s16 top)
 
 /* the calls shown by the plane image are dropped (a flashing part stays a
  * sprite, over it) */
-static u8 o200_arms(const Call *c, u16 i, u16 *a);
+static s8 o200_pose(const Call *c, u16 i, u16 *a);
 
 static void ship_drop_shown(void);
 static u8 o210_ix[6], o210_n;           /* the stage 6 boss's calls in its image */
@@ -268,12 +270,12 @@ static void drop_image_calls(s8 img, Call *c)
     return;                             /* (debug: the sprites drawn over the plane images) */
 #endif
 
-    if ((u8)(img - IMG_O200) < 4) {
-        u8 p = img < IMG_O200 + 2 ? 8 : 7, k;
+    if ((u8)(img - IMG_O200P) < 10) {
+        u8 m = img - IMG_O200P, p = m < 4 || m == 8 ? 8 : 7, k;
         u16 a[4];
         if (pal_of(c) == p)
             c->id = EMPTY_REF;
-        if (!((img - IMG_O200) & 1) && o200_arms(c, c - calls, a))
+        if (m < 8 && o200_pose(c, c - calls, a) >= 0)
             for (k = 0; k < 4; k++)
                 if (pal_of(&calls[a[k]]) == p)
                     calls[a[k]].id = EMPTY_REF;
@@ -526,45 +528,74 @@ static u8 fx_hold(s8 img, s16 best, u16 nfx)
     return 1;
 }
 
-/* obj200 body call c (index i): its four arm calls follow (the charging
- * shots $B5 it draws may come in between) -> their indices in a[], 1 if
- * they are there with the arms closed (48 / 56 px out) */
-#define REF_SHOT   0xB5
-static u8 o200_arms(const Call *c, u16 i, u16 *a)
+#define REF_SHOT   0xB5                 /* (obj200's charging shots: between its arm calls) */
+
+/* obj200 body call i: the arm calls after it (upper left, upper right,
+ * lower left, lower right: a), and the pose of each side (closed or open:
+ * by the upper arm's x, all within 2 px of the pose's, else none: moving;
+ * tools/convert_sprites.py O200_POSE); -1 if not all four are there.  (Once
+ * per body and frame: the last ones kept.) */
+extern u16 xframe;
+static s8 o200_pose(const Call *c, u16 i, u16 *a)
 {
+    static const s8 pose[2][4] = { { -48, -32, -56, 8 }, { -56, -36, -64, 12 } };
     static const u16 want[4] = { REF_O200 + 1, REF_O200 + 1, REF_O200 + 2, REF_O200 + 2 };
-    static const s8 dx[4] = { -48, 48, -56, 56 }, dy[4] = { -32, -32, 8, 8 };
+    static u16 m_i[2], m_f[2], m_a[2][4];
+    static s8 m_r[2];
+    static u8 m_n;
+    s16 bx = c->x >> 6, by = c->y >> 6, r[4][2];
     u16 j = i + 1;
-    u8 k;
+    u8 k, side[2];
+    for (k = 0; k < 2; k++)
+        if (m_f[k] == xframe && m_i[k] == i) {
+            a[0] = m_a[k][0]; a[1] = m_a[k][1]; a[2] = m_a[k][2]; a[3] = m_a[k][3];
+            return m_r[k];
+        }
+    k = m_n++ & 1;
+    m_f[k] = xframe; m_i[k] = i; m_r[k] = -1;
     for (k = 0; k < 4; k++, j++) {
         while (j < ncalls && calls[j].id == REF_SHOT && j < i + 8)
             j++;
-        if (j >= ncalls || calls[j].id != want[k] || calls[j].x != c->x + dx[k] * 64
-            || calls[j].y != c->y + dy[k] * 64)
-            return 0;
+        if (j >= ncalls || calls[j].id != want[k] || ((calls[j].info >> 14) & 1) != (k & 1))
+            return -1;
+        r[k][0] = (calls[j].x >> 6) - bx;
+        r[k][1] = (calls[j].y >> 6) - by;
         a[k] = j;
     }
-    return 1;
+    for (k = 0; k < 2; k++) {           /* (the right side mirrored) */
+        s16 ux = k ? -r[1][0] : r[0][0], lx = k ? -r[3][0] : r[2][0];
+        s16 d = -48 - ux;               /* 0 closed .. 8 open */
+        const s8 *p;
+        u8 m = d >= 4;
+        p = pose[m];
+        if ((u16)(ux - p[0] + 2) > 4 || (u16)(r[k][1] - p[1] + 2) > 4
+            || (u16)(lx - p[2] + 2) > 4 || (u16)(r[2 + k][1] - p[3] + 2) > 4)
+            return -1;
+        side[k] = m;
+    }
+    k = (m_n - 1) & 1;
+    m_r[k] = side[0] * 2 + side[1];
+    m_a[k][0] = a[0]; m_a[k][1] = a[1]; m_a[k][2] = a[2]; m_a[k][3] = a[3];
+    return m_r[k];
 }
 
-/* obj200 body call c: the whole image with the arms closed, else the body
+/* obj200 body call c: the whole image with its arms' poses, else the body
  * alone (the arms stay sprites); by the body's palette 8 / 7 (flashing: the
  * one shown) */
 static s8 o200_image(const Call *c, u16 i)
 {
-    u8 im, p = pal_of(c);
+    u8 p = pal_of(c);
+    s8 k;
     u16 a[4];
-    if (p == 9 || (p != 8 && p != 7 && shown == IMG_O1F0))
-        return IMG_O1F0;                /* (stage 3: the body alone; hit flash) */
-    if (p == 8)
-        im = IMG_O200;
-    else if (p == 7)
-        im = IMG_O200 + 2;
-    else if ((u8)(shown - IMG_O200) < 4)    /* (hit flash) */
-        im = IMG_O200 + ((shown - IMG_O200) & 2);
-    else
-        return -1;
-    return o200_arms(c, i, a) ? im : im + 1;
+    if (p == 9)
+        return IMG_O1F0;                /* (the type $1F0 large enemy: the body alone) */
+    k = o200_pose(c, i, a);
+    if (p != 8 && p != 7) {             /* hit flash: as the one shown (arms: the mid boss) */
+        if (k < 0 && shown == IMG_O1F0)
+            return IMG_O1F0;
+        p = (u8)(shown - IMG_O200P) >= 10 || (u8)(shown - IMG_O200P) < 4 || shown == IMG_O200P + 8 ? 8 : 7;
+    }
+    return k >= 0 ? IMG_O200P + (p == 7 ? 4 : 0) + k : IMG_O200P + 8 + (p == 7);
 }
 
 /* the image would show (some of it) on screen */
@@ -579,7 +610,7 @@ static u8 on_screen(const Call *c, s8 img)
  * mid boss obj200 (palettes 8 / 7), the type $1F0 large enemy, obj21f): the second one on plane A too, side by side (2-cell
  * column scroll, colmode) or one above the other (the H-int split) */
 #define PAIR_IMG(m) ((u8)((m) - IMG_O21A) < 2 || (m) == IMG_O1F0 || (u8)((m) - 3) < 2 \
-                     || (u8)((m) - IMG_O21F9) < 2 || (u8)((m) - IMG_O200) < 4)
+                     || (u8)((m) - IMG_O21F9) < 2 || (u8)((m) - IMG_O200P) < 10)
 static s8 pair_img(const Call *c)       /* (of a call in big_ix, the image it has) */
 {
     u16 id = c->id;
@@ -811,6 +842,11 @@ void plane_frame(void)
                     d = (c->x >> 6) - ax;
                     d = (d < 0 ? -d : d) + (e < 0 ? -e : e);
                 }
+                if (PAIR_IMG(im)) {         /* (of a pair: the one more on screen first, */
+                    const PlaneImg *pi = &plane_img[im];    /* the other may go with it) */
+                    s16 t = (c->y >> 6) + pi->oy, b = t + pi->h * 8;
+                    d += (pi->h * 8 - ((b > 224 ? 224 : b) - (t < 0 ? 0 : t))) * 4;
+                }
                 if (g != loaded)
                     d += g == loading ? 1000 : 2000;
                 if (d < bd) {
@@ -846,12 +882,13 @@ void plane_frame(void)
         u8 g = plane_img[img].group;
         if (loaded != g) {
             if (loading != g) {
-                u8 big = plane_group[g].ntiles > ENEMY_TILES;
+                u16 nt = plane_group[g].ntiles;
+                u8 lend = nt > ENEMY_TILES ? (nt - ENEMY_TILES + 15) >> 4 : 0;   /* (as few as it needs) */
                 loaded = 0xFF;              /* (its tiles are being overwritten) */
                 load_pos = 0;
                 loading = g;
-                xsp_lend(big ? LEND_SLOTS : 0);
-                tbase = big ? ENEMY_BASE - LEND_SLOTS * 16 : ENEMY_BASE;
+                xsp_lend(lend);
+                tbase = ENEMY_BASE - lend * 16;
             }
             if ((u8)(img - IMG_O210) < 7)
                 drop_image_calls(img, &calls[best]);    /* (too large for sprites: not */

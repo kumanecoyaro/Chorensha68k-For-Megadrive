@@ -676,9 +676,28 @@ static void dropchk_after(u16 n)
     }
 }
 #endif
+#ifdef TEST_LINES
+/* (debug) scan lines spent (V counter, 262 a frame): in plane_frame, in
+ * xsp_build, in all (from one flush to the next), and the frames counted */
+u32 lines_plane, lines_build, lines_all, lines_n;
+extern volatile u16 vblank_count;
+static u16 lstamp(void)
+{
+    u8 v = *(volatile u8 *)0xC00008;
+    return (u16)(vblank_count * 262 + (v < 0xE0 ? v + 40 : v - 0xE0));
+}
+#endif
 void xsp_flush(void)
 {
     u16 n;
+#ifdef TEST_LINES
+    static u16 l_last;
+    u16 l0 = lstamp(), l1;
+    if (l_last)
+        lines_all += (u16)(l0 - l_last);
+    l_last = l0;
+    lines_n++;
+#endif
 #ifdef TEST_PLCHK
     Call plc;
     u8 have_pl = 0;
@@ -688,6 +707,10 @@ void xsp_flush(void)
     fp[0] = stamp();
 #endif
     plane_frame();                      /* (may drop the calls of a large enemy) */
+#ifdef TEST_LINES
+    l1 = lstamp();
+    lines_plane += (u16)(l1 - l0);
+#endif
 #ifdef FRAME_PROBE
     fp[1] = stamp();
 #endif
@@ -710,7 +733,13 @@ void xsp_flush(void)
 #ifdef TEST_DROPCHK
     dropchk_before();
 #endif
+#ifdef TEST_LINES
+    l1 = lstamp();
+#endif
     n = xsp_build(table);
+#ifdef TEST_LINES
+    lines_build += (u16)(lstamp() - l1);
+#endif
 #ifdef TEST_DROPCHK
     dropchk_after(n);
 #endif
