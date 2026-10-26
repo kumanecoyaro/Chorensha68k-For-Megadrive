@@ -33,7 +33,13 @@
 #include "spr.h"
 
 #define ENEMY_BASE 1234                 /* VRAM tiles 1234..1535 (xsp.c cache ends at 1234, plane A at 1536) */
-_Static_assert(ENEMY_BASE + PLANE_MAX_TILES <= VRAM_PLANE_A / 32, "plane A enemy tiles overlap plane A");
+#define ENEMY_TILES (VRAM_PLANE_A / 32 - ENEMY_BASE)
+/* a group of more tiles (the stage 6 boss) borrows the sprite cache's last
+ * 16-tile slots below them while it is loaded (src/xsp.c xsp_lend) */
+#define LEND_SLOTS ((PLANE_MAX_TILES - ENEMY_TILES + 15) / 16)
+_Static_assert(PLANE_MAX_TILES <= ENEMY_TILES + 16 * 16, "plane A enemy tiles: too many to borrow");
+void xsp_lend(u8 n);
+static u16 tbase = ENEMY_BASE;          /* VRAM tile of the loaded group's first tile */
 #define EMPTY_REF  REF_EMPTY            /* a dropped call (spr.h: a ref without pieces) */
 #define REF_CRAB   0xB1E                /* obj202: left half, right half, centre */
 #define REF_BOSS   0xB29                /* obj204 */
@@ -57,8 +63,11 @@ _Static_assert(ENEMY_BASE + PLANE_MAX_TILES <= VRAM_PLANE_A / 32, "plane A enemy
 #define IMG_O213   45
 #define REF_O216   0xB5E                /* stage 5 boss obj216: body; parts $B5F..$B67 over it, arms $B68.. */
 #define IMG_O216   46                   /* the body alone, + k: with part $B5E + k (k 1..9) */
-#define BOSS_IMG(m) ((m) == 2 || ((m) >= IMG_O205 && (m) < IMG_O1F0) || (u8)((m) - IMG_O216) < 10)
-#define LOAD_CHUNK 64                   /* tiles per VBlank */
+#define REF_O210   0xB51                /* stage 6 boss obj210 (palette 3): $B51..$B54 drawn twice (mirrored), */
+#define IMG_O210   56                   /* parts $B57 / $B58: $B51, $B52, $B52 + $B58, $B53, $B54, $B53 + $B57, $B55 */
+#define BOSS_IMG(m) ((m) == 2 || ((m) >= IMG_O205 && (m) < IMG_O1F0) || (u8)((m) - IMG_O216) < 10 \
+                     || (u8)((m) - IMG_O210) < 7)
+#define LOAD_CHUNK 64                   /* tiles per VBlank (a group borrowing tiles: twice that) */
 #define WROWS      29                   /* plane rows on screen (224 lines + fine scroll) */
 #define WIN_ROWS   32                   /* win[]: the window, or a still image up to 32 rows (obj21a) */
 
@@ -160,7 +169,7 @@ static void put_image(s8 img, s16 top)
 {
     const PlaneImg *im = &plane_img[img];
     const u16 *m = plane_map + im->map;
-    u16 attr = (((u16)im->pal << 13) | img_prio(img)) + ENEMY_BASE - 1;
+    u16 attr = (((u16)im->pal << 13) | img_prio(img)) + tbase - 1;
     u8 r, c;
     for (r = 0; r < im->h; r++)
         for (c = 0; c < im->w; c++, m++)
@@ -251,6 +260,7 @@ static u8 put_ref(const Call *cl, s16 top)
 static u8 o200_arms(const Call *c, u16 i, u16 *a);
 
 static void ship_drop_shown(void);
+static u8 o210_ix[6], o210_n;           /* the stage 6 boss's calls in its image */
 static void drop_image_calls(s8 img, Call *c)
 {
 #ifdef PLANE_KEEP
@@ -285,6 +295,10 @@ static void drop_image_calls(s8 img, Call *c)
             c->id = EMPTY_REF;
         if (img != IMG_O216 && pal_of(c + 1) == 8 && c[1].x == c->x && c[1].y == c->y)
             c[1].id = EMPTY_REF;
+    } else if ((u8)(img - IMG_O210) < 7) {
+        u8 k;
+        for (k = 0; k < o210_n; k++)       /* (its hit flash too: too large for sprites) */
+            calls[o210_ix[k]].id = EMPTY_REF;
     } else if (img == IMG_O1A1) {
         if (pal_of(c) == 6) c->id = EMPTY_REF;
         if (pal_of(c - 1) == 6) c[-1].id = EMPTY_REF;
@@ -330,7 +344,7 @@ static u8 build_rows(s8 img, u32 cols, u8 mir, u8 k)
 {
     const PlaneImg *im = &plane_img[img];
     const u16 *m = plane_map + im->map;
-    u16 attr = (((u16)im->pal << 13) | img_prio(img)) + ENEMY_BASE - 1;
+    u16 attr = (((u16)im->pal << 13) | img_prio(img)) + tbase - 1;
     u8 r, c, lo = cols >> 16, hi = (u8)cols - 1;
     for (r = 0; r < im->h; r++, m += im->w) {
         u16 *d = win[k + r];
@@ -560,6 +574,51 @@ static u8 on_screen(const Call *c, s8 img)
     return x < 256 && x + im->w * 8 > 0 && y < 224 && y + im->h * 8 > 0;
 }
 
+/* the call of ref id within tol pixels of (x, y) with these flips near call
+ * i, -1 if none */
+static s16 call_near(u16 i, u16 id, s16 x, s16 y, u16 flip, u8 tol)
+{
+    u16 j = i > 8 ? i - 8 : 0, e = i + 9 < ncalls ? i + 9 : ncalls;
+    for (; j < e; j++) {
+        const Call *d = &calls[j];
+        if (d->id == id && (d->info & 0x4000) == flip && (u16)((d->x >> 6) - x + tol) <= 2 * tol
+            && (u16)((d->y >> 6) - y + tol) <= 2 * tol)
+            return j;
+    }
+    return -1;
+}
+
+/* the stage 6 boss obj210 from its unflipped call i: the mirrored one at its
+ * position, $B57 16 px above $B53 / $B58 16 px either side of $B52 (each
+ * with its mirror) when there; o210_ix: the calls the image shows */
+static s8 o210_image(const Call *c, u16 i)
+{
+    u16 k = c->id - REF_O210;
+    s16 x = c->x >> 6, y = c->y >> 6, m, a, b;
+    static const u8 base[5] = { 0, 1, 3, 4, 6 };
+    s8 img = IMG_O210 + base[k];
+    o210_n = 0;
+    o210_ix[o210_n++] = i;
+    if ((m = call_near(i, c->id, x, y, 0x4000, 0)) >= 0)
+        o210_ix[o210_n++] = m;
+    if (k == 2) {
+        a = call_near(i, REF_O210 + 6, x, y - 16, 0, 2);   /* (2 px off: the image all */
+        b = call_near(i, REF_O210 + 6, x, y - 16, 0x4000, 2);  /* the same, no reloading) */
+        if (a >= 0 && b >= 0) {
+            o210_ix[o210_n++] = a; o210_ix[o210_n++] = b;
+            img = IMG_O210 + 5;
+        }
+    } else if (k == 1) {
+        a = call_near(i, REF_O210 + 7, x - 16, y, 0, 2);
+        b = call_near(i, REF_O210 + 7, x + 16, y, 0x4000, 2);
+        if (a >= 0 && b >= 0) {
+            o210_ix[o210_n++] = a; o210_ix[o210_n++] = b;
+            img = IMG_O210 + 2;
+        }
+    }
+    return img;
+}
+
 /* the battleships (obj20A) of the frame: from the centre's position (in
  * pixels) the parts there in palette 6 (mask bit 0 left wing, 1 right
  * wing, 2 centre: image IMG_SHIP + mask - 1, the whole ship pre-composited
@@ -668,6 +727,13 @@ void plane_frame(void)
             boss_seen = 1;
             continue;
         }
+        if ((u16)(id - REF_O210) <= 4 && !(c->info & 0x4000)
+            && (pal_of(c) == 3 || (pal_of(c) >= 14 && (u8)(shown - IMG_O210) < 7))) {
+            best = i;                   /* the stage 6 boss (hit flash: the image kept) */
+            img = o210_image(c, i);
+            boss_seen = 1;
+            continue;
+        }
         if ((u16)(id - REF_SHIP) <= 2) {
             ship_add(c, i);             /* (the ships: after this loop) */
             continue;
@@ -757,10 +823,16 @@ void plane_frame(void)
         u8 g = plane_img[img].group;
         if (loaded != g) {
             if (loading != g) {
+                u8 big = plane_group[g].ntiles > ENEMY_TILES;
                 loaded = 0xFF;              /* (its tiles are being overwritten) */
                 load_pos = 0;
                 loading = g;
+                xsp_lend(big ? LEND_SLOTS : 0);
+                tbase = big ? ENEMY_BASE - LEND_SLOTS * 16 : ENEMY_BASE;
             }
+            if ((u8)(img - IMG_O210) < 7)
+                drop_image_calls(img, &calls[best]);    /* (too large for sprites: not */
+                                                        /* drawn, the few frames it takes) */
             img = -1;                   /* sprites until the tiles are in */
         }
     }
@@ -1035,9 +1107,9 @@ void plane_upload(void)
     if (loading != 0xFF) {
         const PlaneGroup *g = &plane_group[loading];
         u16 n = g->ntiles - load_pos;
-        if (n > LOAD_CHUNK)
-            n = LOAD_CHUNK;
-        dma_rom((ENEMY_BASE + load_pos) * 32, plane_tiles + (g->tile + load_pos) * 8, n * 16);
+        if (n > (tbase < ENEMY_BASE ? 2 * LOAD_CHUNK : LOAD_CHUNK))
+            n = tbase < ENEMY_BASE ? 2 * LOAD_CHUNK : LOAD_CHUNK;
+        dma_rom((tbase + load_pos) * 32, plane_tiles + (g->tile + load_pos) * 8, n * 16);
         load_pos += n;
         if (load_pos >= g->ntiles) {
             loaded = loading;

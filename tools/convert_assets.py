@@ -29,6 +29,7 @@ STAGES = [
     ('bg_fy_nr.pal', range(15, 26)),    # stage 3
     ('bg_fb_np.pal', range(23, 34)),    # stage 4
     ('bg_fr_nb.pal', range(31, 42)),    # stage 5
+    ('bg_fb_ny.pal', range(39, 50)),    # stage 6
 ]
 BG_TILE_MAX = 466                       # VRAM tiles 1..465 (src/xsp.c: the sprite cache follows, 32 4-tile slots at least)
 

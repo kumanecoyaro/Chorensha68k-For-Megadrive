@@ -144,9 +144,9 @@ def patches():
         # long (puffs as dense as before; sprites a quarter)
         (0x109e6, 'e840', 'e440', 'smoke: frame = age >> 2 (asr.w #4 -> #2)'),
         (0x10a14, '0080', '0020', 'smoke: gone at age $20 (cmp.w #$80)'),
-        # stages 1-5 are converted so far: after the stage 5 clear back to
-        # stage 1 (addq.w #1,B_4a0ee -> subq.w #4; src/bg.c restarts the map)
-        (0x0ab00, '5279', '5979', 'stage 5 -> stage 1 (addq.w #1,abs.l -> subq.w #4)'),
+        # stages 1-6 are converted so far: after the stage 6 clear back to
+        # stage 1 (addq.w #1,B_4a0ee -> subq.w #5; src/bg.c restarts the map)
+        (0x0c2cc, '5279', '5b79', 'stage 6 -> stage 1 (addq.w #1,abs.l -> subq.w #5)'),
         # fn_056ae skips a chip equal to the one already in the page cell; with
         # both layers on one plane (src/bg.c) the far chip under it may differ
         (0x057f0, '6774', '4e71', 'BG: always draw the chip (beq.b L05866 -> nop)'),

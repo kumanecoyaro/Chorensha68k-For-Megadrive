@@ -100,6 +100,25 @@ PLANE_GROUPS = [
         # drawn over it ($B5F..$B67, at the body's position); the arms ($B68..) stay sprites
         [('obj216', 0, 0, 8)]] + [[('obj216', 0, 0, 8), ('obj216', k, 0, 8)] for k in range(1, 10)
     ],
+    [   # stage 6 boss obj210 (palette 3, 384 x 240 px: more tiles than the plane A enemy
+        # VRAM, src/plane.c LEND_SLOTS): $B51..$B54, each drawn twice at one position (the
+        # second mirrored: the two halves); $B52 with $B58 16 px either side, $B53 with $B57
+        # 16 px above it (mirrored too; while they move they stay sprites); src/plane.c
+        # IMG_O210 + 0 .. 6: $B51, $B52, $B52 + $B58, $B53, $B54, $B53 + $B57, $B55
+        [('obj210', 0, 0, 3), ('obj210', 0, 0, 3, 0, 1)],
+        [('obj210', 1, 0, 3), ('obj210', 1, 0, 3, 0, 1)],
+        [('obj210', 1, 0, 3), ('obj210', 1, 0, 3, 0, 1), ('obj210', 7, -16, 3), ('obj210', 7, 16, 3, 0, 1)],
+    ],
+    [
+        [('obj210', 2, 0, 3), ('obj210', 2, 0, 3, 0, 1)],
+        [('obj210', 3, 0, 3), ('obj210', 3, 0, 3, 0, 1)],
+    ],
+    [
+        [('obj210', 2, 0, 3), ('obj210', 2, 0, 3, 0, 1), ('obj210', 6, 0, 3, -16), ('obj210', 6, 0, 3, -16, 1)],
+    ],
+    [   # its last form but one $B55 (mirrored too; the last one $B56 is small enough for sprites)
+        [('obj210', 4, 0, 3), ('obj210', 4, 0, 3, 0, 1)],
+    ],
 ]
 BOMB_REFS = list(range(0xB6, 0xC0)) + list(range(0xAA9, 0xAAF))   # expl2 / expl3 / flare (src/plane.c is_effect)
 BOMB_PALS = (1, 3, 5, 12)  # X68000 palettes the bomb draws them with (info $x13F / $xC3F ...)
@@ -335,22 +354,48 @@ def main(xsp, out, sz2x=None):
                         claimed.add(o)
                         tur_alias.append((row * 33 * 33 + (o[1] + 16) * 33 + o[0] + 16,
                                           row * 33 * 33 + (c[1] + 16) * 33 + c[0] + 16))
-    for p, row, offs in steps:
-        px = pcg16(pcg, p)
-        for dx, dy in offs:
-            if abs(dx) > 16 or abs(dy) > 16:
+    def emit_steps(turrets):
+        for p, row, offs in steps:
+            if (row >= TURRET_ROW) != turrets:
                 continue
-            k = row * 33 * 33 + (dy + 16) * 33 + dx + 16
-            if pair_lut[k]:
-                continue
-            ref_start.append(len(pieces))
-            g = {}
+            px = pcg16(pcg, p)
+            for dx, dy in offs:
+                if abs(dx) > 16 or abs(dy) > 16:
+                    continue
+                k = row * 33 * 33 + (dy + 16) * 33 + dx + 16
+                if pair_lut[k]:
+                    continue
+                ref_start.append(len(pieces))
+                g = {}
+                for y in range(16):
+                    for x in range(16):
+                        if px[y * 16 + x]:
+                            g[(x - 16, y - 16)] = g[(x - 16 + dx, y - 16 + dy)] = px[y * 16 + x]
+                emit({0: g})
+                pair_lut[k] = len(ref_start) - pair_ref
+    emit_steps(False)
+    lbeam_ref = len(ref_start)
+    for r in LBEAM_REFS:
+        frm, off, cnt, base = ref_src[r]
+        ax = ay = 0; g = {}
+        for j in range(cnt):
+            vx, vy, pt, info = struct.unpack_from('>hhhH', frm, off + j * 8)
+            ax += vx; ay += vy
+            assert not info & 0x0F00
+            px = pcg16(pcg, pt + base)
             for y in range(16):
                 for x in range(16):
-                    if px[y * 16 + x]:
-                        g[(x - 16, y - 16)] = g[(x - 16 + dx, y - 16 + dy)] = px[y * 16 + x]
-            emit({0: g})
-            pair_lut[k] = len(ref_start) - pair_ref
+                    v = px[(15 - y if info & 0x8000 else y) * 16 + (15 - x if info & 0x4000 else x)]
+                    if v:
+                        g[(ax - 16 + x, ay - 16 + y)] = v
+        g2 = dict(g)
+        for (x, y), v in g.items():
+            g2[(x + 16, y)] = v
+        ref_start.append(len(pieces))
+        emit({0: g2})
+    # the turrets' pairs after every other ref (the blocks before keep their
+    # numbers: tools/hot_keys.txt)
+    emit_steps(True)
     for k, c in tur_alias:
         pair_lut[k] = pair_lut[c]
     # the turrets' second barrels by angle (src/xsp_fast.s h_tur_*): the original
@@ -381,25 +426,6 @@ def main(xsp, out, sz2x=None):
                     r = pair_lut[(TURRET_ROW + pcg_ - TURRET_LO) * 33 * 33 + (ndy + 16) * 33 + ndx + 16]
                     if r:
                         tur_tab[(f * 4 + site) * 256 + idx] = pair_ref + r - 1
-    lbeam_ref = len(ref_start)
-    for r in LBEAM_REFS:
-        frm, off, cnt, base = ref_src[r]
-        ax = ay = 0; g = {}
-        for j in range(cnt):
-            vx, vy, pt, info = struct.unpack_from('>hhhH', frm, off + j * 8)
-            ax += vx; ay += vy
-            assert not info & 0x0F00
-            px = pcg16(pcg, pt + base)
-            for y in range(16):
-                for x in range(16):
-                    v = px[(15 - y if info & 0x8000 else y) * 16 + (15 - x if info & 0x4000 else x)]
-                    if v:
-                        g[(ax - 16 + x, ay - 16 + y)] = v
-        g2 = dict(g)
-        for (x, y), v in g.items():
-            g2[(x + 16, y)] = v
-        ref_start.append(len(pieces))
-        emit({0: g2})
     idx_freq.clear(); idx_freq.update(freq_kept)
     ref_start.append(len(pieces))
     nref = len(ref_start) - 1

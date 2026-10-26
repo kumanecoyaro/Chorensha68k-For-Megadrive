@@ -26,7 +26,7 @@
 #ifndef CACHE_B_SLOTS
 #define CACHE_B_SLOTS 40            /* (28 thrashed with stage 2's mid boss: 16-tile blocks) */
 #endif
-#define PAIR_SLOTS    6             /* the last 16-tile slots: laser segment pairs (pair_tile) */
+#define PAIR_SLOTS    6             /* the first 16-tile slots: laser segment pairs (pair_tile) */
 #define CACHE_B_BASE  (1234 - CACHE_B_SLOTS * 16)
 #define NSLOT (CACHE_A_MAX + CACHE_B_SLOTS)
 static u16 cache_a_base = BG_TILE_COUNT, cache_a_n = (CACHE_B_BASE - BG_TILE_COUNT) / 4;
@@ -54,6 +54,7 @@ u16 pal_attr[16];                       /* $8000 | MD palette << 13 for each X68
 
 static u16 slot_ent[NSLOT];             /* hash entry holding the slot, NO_ENTRY = free */
 static u16 clock_a, clock_b;
+static u8 b_end = CACHE_B_SLOTS;        /* 16-tile slots in use: PAIR_SLOTS.., the rest lent (xsp_lend) */
 static u16 full_frame[2] = { 0xFFFF, 0xFFFF };  /* xframe at which the 4 / 16-tile slots ran out */
 u16 xsp_misses, xsp_fail;
 #ifdef TEST_FAILLOG
@@ -172,7 +173,7 @@ u16 cache_miss(u16 key)
         if (!big) {
             clk = &clock_a; start = 0; i = cache_a_n;
         } else {
-            clk = &clock_b; start = CACHE_A_MAX; i = CACHE_B_SLOTS - PAIR_SLOTS;
+            clk = &clock_b; start = CACHE_A_MAX + PAIR_SLOTS; i = b_end - PAIR_SLOTS;
         }
         /* clock replacement: the next slot not used by the frame being built
          * (an effect, loaded before the sprites: nor by the last frame, so
@@ -180,7 +181,7 @@ u16 cache_miss(u16 key)
         for (;;) {
             u16 st;
             s = start + *clk;
-            if (++*clk >= (big ? CACHE_B_SLOTS - PAIR_SLOTS : cache_a_n))
+            if (++*clk >= (big ? b_end - PAIR_SLOTS : cache_a_n))
                 *clk = 0;
             if (slot_ent[s] == NO_ENTRY)
                 break;
@@ -357,7 +358,7 @@ u16 pair_tile(u16 ci)
 #ifdef TEST_PAIRLOG
             pair_cnt[0]++;
 #endif
-            return CACHE_B_BASE + (CACHE_B_SLOTS - PAIR_SLOTS + k) * 16;
+            return CACHE_B_BASE + k * 16;
         }
     k = (u16)(xframe - pair_tick) >> 2;
     pair_tick += k << 2;
@@ -393,7 +394,7 @@ u16 pair_tile(u16 ci)
         pair_put(dst, src, lut, -pair_ox, -pair_oy, info | 1);
         pair_put(dst, src, lut, dx - pair_ox, dy - pair_oy, info);
     }
-    k = CACHE_B_BASE + (CACHE_B_SLOTS - PAIR_SLOTS + best) * 16;
+    k = CACHE_B_BASE + best * 16;
     up[nup].vram = k * 32;
     up[nup].off = stage_len;
     up[nup].words = 16 * 16;
@@ -418,9 +419,29 @@ void xsp_pairs(int on)
     xsp_route(on);
 }
 
+void plane_fx_forget(void);
+/* the last n 16-tile slots (tiles 1234 - 16n..1233) lent to src/plane.c
+ * (a large enemy image of more tiles than its own VRAM), 0: all back; the
+ * blocks cached there are dropped */
+void xsp_lend(u8 n)
+{
+    u8 e = CACHE_B_SLOTS - n, s;
+    if (e < b_end)
+        for (s = e; s < b_end; s++)
+            if (slot_ent[CACHE_A_MAX + s] != NO_ENTRY) {
+                hash_remove(slot_ent[CACHE_A_MAX + s]);
+                slot_ent[CACHE_A_MAX + s] = NO_ENTRY;
+            }
+    if (e != b_end) {
+        b_end = e;
+        clock_b = 0;
+        full_frame[1] = 0xFFFF;
+        plane_fx_forget();                  /* (its held effect cells may use those tiles) */
+    }
+}
+
 /* the BG set in use takes VRAM tiles 1..bg_end - 1: the 4-tile slots start
  * there; every cached block is dropped (src/bg.c, between two frames) */
-void plane_fx_forget(void);
 void xsp_cache_layout(u16 bg_end)
 {
     u16 i;
@@ -447,7 +468,7 @@ void xsp_cache_layout(u16 bg_end)
  * flare $AA9-$AAE) and the large enemies (obj1a0 centre $B16, obj200 body $B18, crab .. obj205
  * core $B1E-$B31, obj207 $B34-$B3D, obj20A wing $B44, obj20E $B46-$B4D, obj21f $B79-$B7A); xobj_set notes their
  * calls in pl_ix */
-const u8 pl_refmap[(NREF + 7) / 8] = { [22] = 0xc0, [23] = 0xff, [341] = 0x7e, [354] = 0x40, [355] = 0xc1, [356] = 0xff, [357] = 0xff, [358] = 0xf3, [359] = 0x3f, [360] = 0xf8, [361] = 0x3f, [363] = 0xc8, [364] = 0xff, [366] = 0x60, [367] = 0x06 };
+const u8 pl_refmap[(NREF + 7) / 8] = { [22] = 0xc0, [23] = 0xff, [341] = 0x7e, [354] = 0x40, [355] = 0xc1, [356] = 0xff, [357] = 0xff, [358] = 0xf3, [359] = 0x3f, [360] = 0xf8, [361] = 0x3f, [362] = 0x3e, [363] = 0xc8, [364] = 0xff, [366] = 0x60, [367] = 0x06 };
 
 void xsp_init(void)
 {

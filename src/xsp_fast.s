@@ -874,12 +874,12 @@ xsp_build:
     bra     16b
 
 | -- composite ref
-| -- the synthetic pairs (one piece each: turret barrels, angled lasers;
+| -- the synthetic pairs (one piece each: angled lasers, thick beams, turret barrels;
 | not the needles, enemy bullets: the general path's doubler): a single PCG's
 | work, without the effect / share checks
 30: cmp.w   #PAIR_REF, %d2
     bcs    64f
-    cmp.w   #LBEAM_REF, %d2
+    cmp.w   #NREF, %d2                  | (the synthetic refs are the last ones)
     bcc    64f
     cmp.w   #BULLET_PR, 2(%sp)
     beq    64f
