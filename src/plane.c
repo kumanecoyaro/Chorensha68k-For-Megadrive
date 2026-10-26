@@ -64,6 +64,7 @@ static u16 tbase = ENEMY_BASE;          /* VRAM tile of the loaded group's first
 #define REF_O216   0xB5E                /* stage 5 boss obj216: body; parts $B5F..$B67 over it, arms $B68.. */
 #define IMG_O216   46                   /* the body alone, + k: with part $B5E + k (k 1..9) */
 #define REF_O210   0xB51                /* stage 6 boss obj210 (palette 3): $B51..$B54 drawn twice (mirrored), */
+#define IMG_O21F9  63                   /* obj21f in palette 9 (stage 6; images 3 / 4: palette 7) */
 #define IMG_O210   56                   /* parts $B57 / $B58: $B51, $B52, $B52 + $B58, $B53, $B54, $B53 + $B57, $B55 */
 #define BOSS_IMG(m) ((m) == 2 || ((m) >= IMG_O205 && (m) < IMG_O1F0) || (u8)((m) - IMG_O216) < 10 \
                      || (u8)((m) - IMG_O210) < 7)
@@ -276,7 +277,7 @@ static void drop_image_calls(s8 img, Call *c)
             for (k = 0; k < 4; k++)
                 if (pal_of(&calls[a[k]]) == p)
                     calls[a[k]].id = EMPTY_REF;
-    } else if (img == IMG_O1F0) {
+    } else if (img == IMG_O1F0 || (u8)(img - IMG_O21F9) < 2) {
         if (pal_of(c) == 9)
             c->id = EMPTY_REF;
     } else if ((u8)(img - IMG_O20E) < 8) {
@@ -574,6 +575,21 @@ static u8 on_screen(const Call *c, s8 img)
     return x < 256 && x + im->w * 8 > 0 && y < 224 && y + im->h * 8 > 0;
 }
 
+/* large enemies coming two at a time (the stage 5 battleships, the type $1F0
+ * large enemy, obj21f): the second one on plane A too, side by side (2-cell
+ * column scroll, colmode) or one above the other (the H-int split) */
+#define PAIR_IMG(m) ((u8)((m) - IMG_O21A) < 2 || (m) == IMG_O1F0 || (u8)((m) - 3) < 2 \
+                     || (u8)((m) - IMG_O21F9) < 2)
+static s8 pair_img(const Call *c)       /* (of a call in big_ix, the image it has) */
+{
+    u16 id = c->id;
+    if ((u16)(id - REF_O21A) <= 1)
+        return IMG_O21A + (id - REF_O21A);
+    if (id == REF_O200)
+        return IMG_O1F0;
+    return ((u8)(shown - IMG_O21F9) < 2 || pal_of(c) == 9 ? IMG_O21F9 : 3) + (id - REF_O21F);
+}
+
 /* the call of ref id within tol pixels of (x, y) with these flips near call
  * i, -1 if none */
 static s16 call_near(u16 i, u16 id, s16 x, s16 y, u16 flip, u8 tol)
@@ -695,8 +711,8 @@ void plane_frame(void)
     u16 i, fx = 0;
     u8 k;
     s8 bship = -1, bship2 = -1;         /* the ship (index in ship[]) shown, the second one */
-    u8 nbig = 0, big_ix[3];             /* stage 5 battleships on screen (call indices) */
-    s16 big2 = -1;
+    u8 nbig = 0, big_ix[3];             /* large enemies two of which may show (call indices) */
+    s16 big2 = -1, big2v = -1;
     Call *c;
     nship = 0;
     /* the calls xobj_set noted (src/xsp_fast.s): the large enemy, the effects */
@@ -750,15 +766,20 @@ void plane_frame(void)
             if (id == REF_CRAB + 2 && i >= 2 && c[-2].id == REF_CRAB && c[-1].id == REF_CRAB + 1
                 && c[-2].y == c->y && c[-1].y == c->y)
                 im = ((c->x - c[-2].x) >> 6) <= 2 ? 0 : 1;
-            else if ((u16)(id - REF_O21F) <= 1)
-                im = 3 + (id - REF_O21F);
+            else if ((u16)(id - REF_O21F) <= 1) {
+                u8 p = pal_of(c);           /* (hit flash: the image kept) */
+                if (p == 9 || (p >= 14 && (u8)(shown - IMG_O21F9) < 2))
+                    im = IMG_O21F9 + (id - REF_O21F);
+                else if (p == 7 || (p >= 14 && (u8)(shown - 3) < 2))
+                    im = 3 + (id - REF_O21F);
+            }
             else if (id == REF_O200)
                 im = o200_image(c, i);
             else if ((u16)(id - REF_O21A) <= 1
                      && (pal_of(c) == 6 || (pal_of(c) >= 14 && (u8)(shown - IMG_O21A) < 2)))
                 im = IMG_O21A + (id - REF_O21A);    /* (hit flash: the image kept) */
-            if (im >= 0 && (u8)(im - IMG_O21A) < 2 && nbig < 3 && on_screen(c, im))
-                big_ix[nbig++] = i;
+            if (im >= 0 && PAIR_IMG(im) && nbig < 3 && on_screen(c, im))
+                big_ix[nbig++] = i;         /* (two of them: src/plane.c colmode / split) */
             else if (id == REF_O213 && (pal_of(c) == 3 || (pal_of(c) >= 14 && shown == IMG_O213)))
                 im = IMG_O213;
             else if ((u16)(id - REF_O20E) <= 7
@@ -874,13 +895,13 @@ void plane_frame(void)
     colmode = 0;
     {
         s16 best2c = -1;
-        if ((u8)(img - IMG_O21A) < 2 && !fx && !was_fx && bg_on)
+        if (img >= 0 && PAIR_IMG(img) && !fx && !was_fx && bg_on)
             for (k = 0; k < nbig; k++)
-                if (big_ix[k] != best) {
+                if (big_ix[k] != best && plane_img[pair_img(&calls[big_ix[k]])].group == plane_img[img].group) {
                     /* (their cells' ranges 16 px apart at least: no 2-cell
                      * column holds both) */
                     const Call *c1 = &calls[best], *c2 = &calls[big_ix[k]];
-                    const PlaneImg *i1 = &plane_img[img], *i2 = &plane_img[IMG_O21A + (c2->id - REF_O21A)];
+                    const PlaneImg *i1 = &plane_img[img], *i2 = &plane_img[pair_img(c2)];
                     s16 a0 = (c1->x >> 6) + i1->ox, a1 = a0 + i1->w * 8;
                     s16 b0 = (c2->x >> 6) + i2->ox, b1 = b0 + i2->w * 8;
                     if (b0 - a1 >= 16 || a0 - b1 >= 16) {
@@ -891,6 +912,26 @@ void plane_frame(void)
         if (best2c >= 0) {
             colmode = 1;
             big2 = best2c;
+        } else if (img >= 0 && PAIR_IMG(img) && (u8)(img - IMG_O21A) >= 2 && !fx && !was_fx && bg_on) {
+            /* one above the other (a gap holding an 8-line boundary): the
+             * H-int split as for the stage 4 battleships */
+            const PlaneImg *i1 = &plane_img[img];
+            s16 y1 = (calls[best].y >> 6) + i1->oy, h1 = i1->h * 8;
+            for (k = 0; k < nbig; k++)
+                if (big_ix[k] != best && plane_img[pair_img(&calls[big_ix[k]])].group == i1->group) {
+                    const PlaneImg *i2 = &plane_img[pair_img(&calls[big_ix[k]])];
+                    s16 y2 = (calls[big_ix[k]].y >> 6) + i2->oy, h2 = i2->h * 8, sl;
+                    if (y2 >= y1 + h1)
+                        sl = (y1 + h1 + 7) & ~7;
+                    else if (y1 >= y2 + h2)
+                        sl = (y2 + h2 + 7) & ~7;
+                    else
+                        continue;
+                    if (sl > (y2 > y1 ? y2 : y1) || sl <= 0 || sl >= 224)
+                        continue;
+                    big2v = big_ix[k]; split = sl;
+                    break;
+                }
         }
     }
     if (img >= 0) {
@@ -931,7 +972,7 @@ void plane_frame(void)
             /* the left one and the right one; one horizontal scroll for both:
              * the fine part splits the difference (2 px off at most) */
             const Call *cl = &calls[best], *cr = &calls[big2];
-            s8 il = img, ir = IMG_O21A + (cr->id - REF_O21A), bl, br;
+            s8 il = img, ir = pair_img(cr), bl, br;
             s16 xl, xr, f, d;
             u32 kl, kr;
             if ((cr->x >> 6) < (cl->x >> 6)) {
@@ -983,6 +1024,30 @@ void plane_frame(void)
             st_img = iu; st_img2 = il; st_cols = cu; st_cols2 = cl;
             ship_drop(&ship[bship]);
             ship_drop(s2);
+            return;
+        }
+        if (big2v >= 0) {
+            /* the upper one in plane rows 0.., the lower one in rows 32.. */
+            const Call *c2 = &calls[big2v];
+            s8 img2 = pair_img(c2), iu = img, il = img2;
+            const PlaneImg *im2 = &plane_img[img2];
+            s16 h2 = (c2->x >> 6) + im2->ox, v2 = (c2->y >> 6) + im2->oy;
+            u32 cu, cl;
+            if (v2 < -vs) {             /* the second one above: it takes rows 0.. */
+                s16 t = hs;
+                hs = h2; hs2 = t;
+                vs2 = 256 + vs; vs = -v2;
+                iu = img2; il = img;
+            } else {
+                hs2 = h2; vs2 = 256 - v2;
+            }
+            cu = visible_cols(&plane_img[iu], hs);
+            cl = visible_cols(&plane_img[il], hs2);
+            if (st_img != iu || st_img2 != il || cu != st_cols || cl != st_cols2)
+                write_static(iu, cu, 0, il, cl, 0);
+            st_img = iu; st_img2 = il; st_cols = cu; st_cols2 = cl;
+            drop_image_calls(img, &calls[best]);
+            drop_image_calls(img2, (Call *)c2);
             return;
         }
         split = 0;

@@ -119,6 +119,10 @@ PLANE_GROUPS = [
     [   # its last form but one $B55 (mirrored too; the last one $B56 is small enough for sprites)
         [('obj210', 4, 0, 3), ('obj210', 4, 0, 3, 0, 1)],
     ],
+    [   # obj21f in stage 6 (palette 9): $B79, $B7A after it fires
+        [('obj21f', 0, 0, 9)],
+        [('obj21f', 1, 0, 9)],
+    ],
 ]
 BOMB_REFS = list(range(0xB6, 0xC0)) + list(range(0xAA9, 0xAAF))   # expl2 / expl3 / flare (src/plane.c is_effect)
 BOMB_PALS = (1, 3, 5, 12)  # X68000 palettes the bomb draws them with (info $x13F / $xC3F ...)
