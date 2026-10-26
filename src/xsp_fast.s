@@ -1447,6 +1447,7 @@ pair_put:
 |   split_hs: the second image (the second of two battleships)
 | * act_fm_ev from fm_evi (formation mode, src/plane.c fm_ev; a line 0xFF
 |   after the last): the VSRAM values of the columns from the lines reached
+|   (columns 0xFF: plane A's horizontal scroll, for the next row of units)
 | * DBL_A: the sprite doubler.  The bullets above line DBL_A have been
 |   shown: their slots in the sprite table take the bullets below DBL_B
 |   (xsp_upload sets act_*; hint_n is the count still to write this frame).
@@ -1484,7 +1485,12 @@ _hint:
     move.w  #0x8F04, 0xC00004           | (VSRAM: plane A's columns one after the other)
 5:  moveq   #0, %d2
     move.b  1(%a0), %d2                 | columns first << 4 | last
-    move.w  %d2, %d3
+    cmp.b   #0xFF, %d2                  | (0xFF: plane A's horizontal scroll)
+    bne.s   11f
+    move.l  #0x40000000 + ((VRAM_HSCROLL & 0x3FFF) << 16) + (VRAM_HSCROLL >> 14), 0xC00004
+    move.w  2(%a0), 0xC00000
+    bra.s   12f
+11: move.w  %d2, %d3
     and.w   #15, %d3
     lsr.w   #4, %d2
     sub.w   %d2, %d3                    | (count - 1)
@@ -1495,7 +1501,7 @@ _hint:
     move.w  2(%a0), %d2
 7:  move.w  %d2, 0xC00000
     dbra    %d3, 7b
-    addq.l  #4, %a0
+12: addq.l  #4, %a0
     addq.b  #1, %d1
     cmp.b   (%a0), %d0
     bcc.s   5b

@@ -130,13 +130,6 @@ PARTICLE_INITS = [
 # (by the turret angle, src/xsp_fast.s h_tur_*: the call site tells the tables)
 TURRET_PAIR2 = [(0x16932, 'h_tur_a1'), (0x1699c, 'h_tur_a2'), (0x16d44, 'h_tur_b1'), (0x16e10, 'h_tur_b2')]
 
-# jumps into hooks from the middle of a function: (address, old bytes hex, hook)
-#   $15c02 (type $1A1, the stage 3 formation units of obj1a0: L15c02, the unit's
-#   position just set from its path): every other unit 64 px lower while the
-#   path runs across (src/x68.c o1a1_shift: a row of them is drawn on plane A
-#   in two bands split by the H-int)
-MID_JUMPS = [(0x15c02, '4a6800706700', 'h_o1a1_y')]
-
 # immediate patches: (address, old bytes hex, new bytes hex, comment)
 def patches():
     n = POOL_OBJS
@@ -240,7 +233,7 @@ def main(xpath, lst, xspdir, out):
         img[addr:addr + len(nb)] = nb
 
     # ---- hooks
-    names = ['h_alloc_none'] + [n for _, n in TURRET_PAIR2] + [n for _, _, n in MID_JUMPS]
+    names = ['h_alloc_none'] + [n for _, n in TURRET_PAIR2]
     hs = sorted(h[0] for h in HOOKS)
     for a, b in zip(hs, hs[1:]):
         assert b - a >= 6, f'hook patches overlap at ${a:x} / ${b:x}'
@@ -251,10 +244,6 @@ def main(xpath, lst, xspdir, out):
         i = names.index(sym)
         struct.pack_into('>HI', img, addr, 0x4EF9, HOOK_BASE + 6 * i)
 
-    for a, old, n in MID_JUMPS:
-        ob = bytes.fromhex(old)
-        assert img[a:a + len(ob)] == ob, (hex(a), img[a:a + len(ob)].hex())
-        struct.pack_into('>HI', img, a, 0x4EF9, HOOK_BASE + 6 * names.index(n))
     for a, n in TURRET_PAIR2:
         assert img[a:a + 2] == b'\x4e\xb9' and struct.unpack_from('>I', img, a + 2)[0] == ORIG_ROM + 0x2c9fe, hex(a)
         struct.pack_into('>I', img, a + 2, HOOK_BASE + 6 * names.index(n))
