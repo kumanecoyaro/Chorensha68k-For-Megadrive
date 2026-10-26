@@ -72,11 +72,6 @@ static u16 tbase = ENEMY_BASE;          /* VRAM tile of the loaded group's first
 #define FM_MAX     16                   /* units looked at (src/plane.c fm_select) */
 #define FM_PL      10                   /* units placed */
 #define FM_BANDS   4                    /* rows of them (each its own horizontal scroll) */
-#ifndef FM_LINE_PX
-#define FM_LINE_PX 96                   /* sprites of the units on a line at the most (H32: 256 */
-#define FM_LINE_N  6                    /* px, 16 sprites; the rest for the bullets, the ship) */
-#define FM_SPR     28                   /* all their sprites at the most (of 64) */
-#endif
 #define FM_EV      24                   /* VSRAM changes a frame (src/xsp_fast.s _hint) */
 #define REF_O20F   0xB4E                /* stage 6 obj20F: pods $B4E, $B4F, centre $B50 */
 #define IMG_O20F   75                   /* the whole of it (palette 8) */
@@ -183,7 +178,6 @@ static u8 fm_on;
 static u8 fm_n, fm_ix[FM_MAX];          /* the frame's units: call indices (B15 / B16 calls) */
 static u8 fm_band[FM_MAX];              /* (fm_select: the row a unit is in) */
 static u8 fm_seen, fm_col;              /* (fm_col: a column of them, fm_write) */
-static s16 fm_over;                     /* (their sprites over FM_SPR: onto plane A) */
 static s8 fm_img[FM_MAX];
 typedef struct { u32 k; u16 c; } FmRect;  /* a unit written: img, r0, nr, row, base; columns lo << 8 | hi */
 static FmRect fm_old[FM_PL];           /* (the units in the window: only those that change rewritten) */
@@ -841,21 +835,17 @@ typedef struct {                        /* (a unit, in fm_write) */
     u8 band;
     s8 base;                            /* (its first column in the window) */
 } FmU;
-/* the units of the formations that may go on plane A: in a column of them
- * (64 px apart one under the other) those of the leftmost column (one band);
- * in rows of them (64 px apart side by side, level) each row a band.  Units
- * in neither (the formations on winding paths) stay sprites.  fm_write puts
- * on plane A only as many as it takes for the rest not to vanish as sprites
- * (FM_LINE_PX / FM_LINE_N on a row's lines, FM_SPR in all): every other one
- * from the left first, none overlapping another in the window. */
+/* the units of the formations shown on plane A (the rest stay sprites): in
+ * a column of them (64 px apart one under the other) those of the leftmost
+ * column (one band); in rows of them (64 px apart side by side, level) each
+ * row a band (fm_write: those not overlapping the ones placed before them,
+ * from the left).  Units in neither (the formations on winding paths) stay
+ * sprites. */
 static void fm_select(void)
 {
     s16 x[FM_MAX], cv[8], rv[8], rx[8];
     u8 ci[FM_MAX], ri[FM_MAX], cn[8], rn[8], rok[8], rb[8];
     u8 k, j, n = fm_n, m = 0, nc = 0, nr = 0, col = 0xFF;
-    fm_over = -FM_SPR;
-    for (k = 0; k < n; k++)             /* (as sprites: folded 4, opened 5) */
-        fm_over += fm_img[k] == IMG_FM ? 4 : 5;
     for (k = 0; k < n; k++) {           /* (the columns by x, the rows by y: 20 px for one) */
         const Call *cl = &calls[fm_ix[k]];
         s16 a = cl->x >> 6, b = cl->y >> 6;
@@ -979,68 +969,49 @@ static void fm_write(void)
             j = (y0 - L + 7) >> 3;
             R0 = R - 2 + (j > 2 ? j : 2);
         }
-        {                               /* (its units as sprites: the load on their lines) */
-            FmU *cand[FM_MAX];
-            u8 nc = 0, pass, i;
-            s16 px = 0, cnt = 0;
-            for (j = 0; j < bn[q]; j++) {
-                FmU *p = bu[q][j];
-                const PlaneImg *im = p->im;
-                s16 dy = p->y - y0;
-                if (p->y + im->h * 8 <= 0 || p->y >= 224 || p->x + im->w * 8 <= 0
-                    || p->x >= 256 || p->y < lo || (dy & 7) || R0 + (dy >> 3) + im->h > 32)
+        for (j = 0; j < bn[q]; j++) {   /* (from the left: those overlapping one placed: sprites) */
+            FmU *p = bu[q][j];
+            const PlaneImg *im = p->im;
+            s16 dy = p->y - y0, hp;
+            u16 r;
+            if (p->y + im->h * 8 <= 0 || p->y >= 224 || p->x + im->w * 8 <= 0
+                || p->x >= 256 || p->y < lo || (dy & 7) || nn == FM_PL)
+                continue;
+            r = R0 + (dy >> 3);
+            if (r + im->h > 32)
+                continue;
+            if (!any)                   /* (the band's horizontal scroll: all 64 px apart, */
+                f = p->x & 63;          /* their places in the window kept while it moves) */
+            p->base = (p->x - f + 4) >> 3;
+            hp = p->base * 8 + f;
+            {
+                s16 l = (7 - hp) >> 3, h = (248 - hp) >> 3;
+                u32 m;
+                u8 sh;
+                if (l < 0) l = 0;
+                if (h > im->w - 1) h = im->w - 1;
+                if (l > h)
                     continue;
-                cand[nc++] = p;
-                px += p->img == IMG_FM ? 64 : 96;
-                cnt += p->img == IMG_FM ? 2 : 3;
+                m = ROWS_MASK(h - l + 1);
+                sh = (p->base + l) & 31;
+                if (sh)
+                    m = m << sh | m >> (32 - sh);
+                if (!fm_col && (used & m))
+                    continue;
+                used |= m;
+                any = 1;
+                p->ix &= 0x7F;
+                p->r0 = 0; p->nr = im->h; p->pr = r;
+                cur[nn].k = (u32)(u8)p->img << 24 | (u32)p->nr << 13 | (u32)p->pr << 8 | (u8)p->base;
+                cur[nn].c = l << 8 | h;
+                cu[nn] = p;
+                rows |= ROWS_MASK(p->nr) << p->pr;
+                nn++;
+                if (r + im->h + 2 > R)
+                    R = r + im->h + 2;
+                if (p->y + im->h * 8 > e)
+                    e = p->y + im->h * 8;
             }
-            if (fm_col)                 /* (a column: one of them on a line) */
-                px = cnt = 0;
-            for (pass = 0; pass < 2; pass++)    /* (every other one from the left, then */
-                for (i = pass; i < nc; i += 2) {    /* the others) */
-                    FmU *p = cand[i];
-                    const PlaneImg *im = p->im;
-                    s16 dy = p->y - y0, hp;
-                    u16 r = R0 + (dy >> 3);
-                    if ((px <= FM_LINE_PX && cnt <= FM_LINE_N && fm_over <= 0) || nn == FM_PL)
-                        goto band_done;
-                    if (!any)                   /* (the band's horizontal scroll: all 64 px apart, */
-                        f = p->x & 63;          /* their places in the window kept while it moves) */
-                    p->base = (p->x - f + 4) >> 3;
-                    hp = p->base * 8 + f;
-                    {
-                        s16 l = (7 - hp) >> 3, h = (248 - hp) >> 3;
-                        u32 m;
-                        u8 sh;
-                        if (l < 0) l = 0;
-                        if (h > im->w - 1) h = im->w - 1;
-                        if (l > h)
-                            continue;
-                        m = ROWS_MASK(h - l + 1);
-                        sh = (p->base + l) & 31;
-                        if (sh)
-                            m = m << sh | m >> (32 - sh);
-                        if (!fm_col && (used & m))
-                            continue;
-                        used |= m;
-                        any = 1;
-                        p->ix &= 0x7F;
-                        p->r0 = 0; p->nr = im->h; p->pr = r;
-                        cur[nn].k = (u32)(u8)p->img << 24 | (u32)p->nr << 13 | (u32)p->pr << 8 | (u8)p->base;
-                        cur[nn].c = l << 8 | h;
-                        cu[nn] = p;
-                        rows |= ROWS_MASK(p->nr) << p->pr;
-                        nn++;
-                        if (r + im->h + 2 > R)
-                            R = r + im->h + 2;
-                        if (p->y + im->h * 8 > e)
-                            e = p->y + im->h * 8;
-                        px -= p->img == IMG_FM ? 64 : 96;
-                        cnt -= p->img == IMG_FM ? 2 : 3;
-                        fm_over -= p->img == IMG_FM ? 4 : 5;
-                    }
-                }
-          band_done:;
         }
         if (!any)
             continue;
