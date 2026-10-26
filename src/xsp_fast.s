@@ -1437,7 +1437,8 @@ pair_put:
     rts
 
 | Level 4 H-int (src/vdp.c register 10: after line DBL_A - 1, or every 8
-| lines while plane A shows two images, src/plane.c).  The line from the
+| lines while plane A shows two images, src/plane.c; off once nothing is
+| left to do in the frame).  The line from the
 | V counter (rounded to the 8-line boundary: a late H-int, held off while
 | the VBlank handler masks it, does its work late rather than not at all):
 | * split_line (0: none): plane A's scroll from that line on is split_vs /
@@ -1452,7 +1453,7 @@ _hint:
     moveq   #0, %d0
     move.b  0xC00008, %d0               | V counter
     cmp.b   #0xE0, %d0                  | (in the VBlank: a stale H-int, H-int
-    bcc     9f                          | just turned on)
+    bcc     8f                          | just turned on)
     addq.w  #4, %d0
     and.w   #0xF8, %d0                  | the boundary just reached
     tst.w   split_line
@@ -1486,7 +1487,12 @@ _hint:
     move.l  (%a2)+, -4(%a0)
     dbra    %d0, 2b
     movem.l (%sp)+, %d1/%a0-%a2
-9:  move.l  (%sp)+, %d0
+9:  tst.w   split_line                  | nothing more this frame: the H-int off
+    bne.s   8f                          | (src/plane.c plane_vblank turns it on;
+    tst.w   hint_n                      | while split it comes every 8 lines)
+    bne.s   8f
+    move.w  #0x8004, 0xC00004           | (register 0: H-int off)
+8:  move.l  (%sp)+, %d0
     rte
 
 | xsp_route(on) (src/xsp.c xsp_pairs): laser pairs (h_xsp_set_boss) or not

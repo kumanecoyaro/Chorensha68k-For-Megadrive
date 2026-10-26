@@ -136,6 +136,11 @@ PLANE_GROUPS = [
          ('obj200', 2, -O200_POSE[ri][2], p, O200_POSE[ri][3], 1)]
         for p in (8, 7) for li in range(2) for ri in range(2)
     ] + [[('obj200', 0, 0, 8)], [('obj200', 0, 0, 7)]],     # (+ 8 / 9: the body alone)
+    [   # stage 6 large enemy obj20F (palette 8, two at a time): the centre $B50, $B4F 23 px
+        # either side, the pods $B4E 52 px either side (the right ones mirrored)
+        [('obj20F', 2, 0, 8), ('obj20F', 1, -23, 8, 4), ('obj20F', 1, 22, 8, 4, 1),
+         ('obj20F', 0, -52, 8, -13), ('obj20F', 0, 51, 8, -13, 1)],
+    ],
 ]
 BOMB_REFS = list(range(0xB6, 0xC0)) + list(range(0xAA9, 0xAAF))   # expl2 / expl3 / flare (src/plane.c is_effect)
 BOMB_PALS = (1, 3, 5, 12)  # X68000 palettes the bomb draws them with (info $x13F / $xC3F ...)

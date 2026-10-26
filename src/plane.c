@@ -66,6 +66,8 @@ static u16 tbase = ENEMY_BASE;          /* VRAM tile of the loaded group's first
 #define REF_O210   0xB51                /* stage 6 boss obj210 (palette 3): $B51..$B54 drawn twice (mirrored), */
 #define IMG_O200P  65                   /* obj200 whole: + 4 * (palette 7) + left pose * 2 + right pose, */
                                         /* + 8 / 9 the body alone (palette 8 / 7) */
+#define REF_O20F   0xB4E                /* stage 6 obj20F: pods $B4E, $B4F, centre $B50 */
+#define IMG_O20F   75                   /* the whole of it (palette 8) */
 #define IMG_O21F9  63                   /* obj21f in palette 9 (stage 6; images 3 / 4: palette 7) */
 #define IMG_O210   56                   /* parts $B57 / $B58: $B51, $B52, $B52 + $B58, $B53, $B54, $B53 + $B57, $B55 */
 #define BOSS_IMG(m) ((m) == 2 || ((m) >= IMG_O205 && (m) < IMG_O1F0) || (u8)((m) - IMG_O216) < 10 \
@@ -261,6 +263,7 @@ static u8 put_ref(const Call *cl, s16 top)
 /* the calls shown by the plane image are dropped (a flashing part stays a
  * sprite, over it) */
 static s8 o200_pose(const Call *c, u16 i, u16 *a);
+static u8 o20f_parts(const Call *c, u16 i, u16 *a);
 
 static void ship_drop_shown(void);
 static u8 o210_ix[6], o210_n;           /* the stage 6 boss's calls in its image */
@@ -290,6 +293,16 @@ static void drop_image_calls(s8 img, Call *c)
     } else if ((u8)(img - IMG_O21A) < 2) {
         if (pal_of(c) == 6)
             c->id = EMPTY_REF;
+    } else if (img == IMG_O20F) {
+        u16 a[4];
+        u8 k;
+        if (o20f_parts(c, c - calls, a)) {
+            if (pal_of(c) == 8)
+                c->id = EMPTY_REF;
+            for (k = 0; k < 4; k++)
+                if (pal_of(&calls[a[k]]) == 8)
+                    calls[a[k]].id = EMPTY_REF;
+        }
     } else if (img == IMG_O213) {
         if (pal_of(c) == 3)
             c->id = EMPTY_REF;
@@ -610,12 +623,14 @@ static u8 on_screen(const Call *c, s8 img)
  * mid boss obj200 (palettes 8 / 7), the type $1F0 large enemy, obj21f): the second one on plane A too, side by side (2-cell
  * column scroll, colmode) or one above the other (the H-int split) */
 #define PAIR_IMG(m) ((u8)((m) - IMG_O21A) < 2 || (m) == IMG_O1F0 || (u8)((m) - 3) < 2 \
-                     || (u8)((m) - IMG_O21F9) < 2 || (u8)((m) - IMG_O200P) < 10)
+                     || (u8)((m) - IMG_O21F9) < 2 || (u8)((m) - IMG_O200P) < 10 || (m) == IMG_O20F)
 static s8 pair_img(const Call *c)       /* (of a call in big_ix, the image it has) */
 {
     u16 id = c->id;
     if ((u16)(id - REF_O21A) <= 1)
         return IMG_O21A + (id - REF_O21A);
+    if (id == REF_O20F + 2)
+        return IMG_O20F;
     if (id == REF_O200) {
         s8 m = o200_image(c, c - calls);    /* (palette 9: IMG_O1F0) */
         return m >= 0 ? m : IMG_O1F0;
@@ -635,6 +650,39 @@ static s16 call_near(u16 i, u16 id, s16 x, s16 y, u16 flip, u8 tol)
             return j;
     }
     return -1;
+}
+
+/* obj20F centre call i: its parts right after it (within 2 px of their
+ * places): $B4F either side, the pods $B4E either side (the right ones
+ * mirrored) -> a (if not 0).  (Once per call and frame: the last kept.) */
+static u8 o20f_parts(const Call *c, u16 i, u16 *a)
+{
+    static const s8 dx[4] = { -23, 22, -52, 51 }, dy[4] = { 4, 4, -13, -13 };
+    static const u16 id[4] = { REF_O20F + 1, REF_O20F + 1, REF_O20F, REF_O20F };
+    static u16 m_i[2] = { 0xFFFF, 0xFFFF }, m_f[2];
+    static u8 m_r[2], m_n;
+    s16 x = c->x >> 6, y = c->y >> 6;
+    u8 k, e;
+    for (e = 0; e < 2; e++)
+        if (m_i[e] == i && m_f[e] == xframe)
+            break;
+    if (e == 2) {
+        e = m_n++ & 1;
+        m_i[e] = i; m_f[e] = xframe; m_r[e] = 0;
+        if (i + 5u > ncalls)
+            return 0;
+        for (k = 0; k < 4; k++) {
+            const Call *d = &calls[i + 1 + k];
+            if (d->id != id[k] || ((d->info >> 14) & 1) != (k & 1)
+                || (u16)((d->x >> 6) - x - dx[k] + 2) > 4 || (u16)((d->y >> 6) - y - dy[k] + 2) > 4)
+                return 0;
+        }
+        m_r[e] = 1;
+    }
+    if (m_r[e] && a)
+        for (k = 0; k < 4; k++)
+            a[k] = i + 1 + k;
+    return m_r[e];
 }
 
 /* the stage 6 boss obj210 from its unflipped call i: the mirrored one at its
@@ -764,7 +812,8 @@ void plane_frame(void)
             continue;
         }
         big |= id < REF_O21F && id != REF_O1A1 /* (pl_refmap: the bosses and mid bosses below obj21f) */
-               && (u16)(id - REF_O21A) > 1;     /* (the stage 5 battleship fires no lasers) */
+               && (u16)(id - REF_O21A) > 1      /* (the stage 5 battleship fires no lasers, */
+               && (u16)(id - REF_O20F) > 2;     /* nor obj20F) */
         if (BOSS_IMG(img))              /* (a boss chosen) */
             continue;
         if (id == REF_O216 && (pal_of(c) == 8 || (pal_of(c) >= 14 && (u8)(shown - IMG_O216) < 10))) {
@@ -799,6 +848,9 @@ void plane_frame(void)
             if (id == REF_CRAB + 2 && i >= 2 && c[-2].id == REF_CRAB && c[-1].id == REF_CRAB + 1
                 && c[-2].y == c->y && c[-1].y == c->y)
                 im = ((c->x - c[-2].x) >> 6) <= 2 ? 0 : 1;
+            else if (id == REF_O20F + 2 && !(c->info & 0x4000)
+                     && (pal_of(c) == 8 || (pal_of(c) >= 10 && shown == IMG_O20F)) && o20f_parts(c, i, 0))
+                im = IMG_O20F;              /* (hit flash: the image kept) */
             else if ((u16)(id - REF_O21F) <= 1) {
                 u8 p = pal_of(c);           /* (hit flash: the image kept) */
                 if (p == 9 || (p >= 14 && (u8)(shown - IMG_O21F9) < 2))
@@ -877,6 +929,10 @@ void plane_frame(void)
         }
     if (fx > FX_CALLS)
         fx = FX_CALLS;                  /* (the rest stay sprites) */
+    if (best >= 0 && !BOSS_IMG(img) && !nbomb && !was_fx)
+        fx = 0;                         /* a large enemy (not a boss: its death) shown: the */
+                                        /* explosions stay sprites (composited into its tiles */
+                                        /* on plane A: some 140 lines a frame) */
     xsp_pairs(big);                     /* a boss / mid boss about: its lasers paired */
     if (best >= 0) {
         u8 g = plane_img[img].group;
