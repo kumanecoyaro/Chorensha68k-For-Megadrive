@@ -118,7 +118,7 @@ PLANE_GROUPS = [
     [
         [('obj210', 2, 0, 3), ('obj210', 2, 0, 3, 0, 1), ('obj210', 6, 0, 3, -16), ('obj210', 6, 0, 3, -16, 1)],
     ],
-    [   # its last form but one $B55 (mirrored too; the last one $B56 is small enough for sprites)
+    [   # its last form but one $B55 (mirrored too; the last one $B56: a group of its own below)
         [('obj210', 4, 0, 3), ('obj210', 4, 0, 3, 0, 1)],
     ],
     [   # obj21f in stage 6 (palette 9): $B79, $B7A after it fires
@@ -148,6 +148,15 @@ PLANE_GROUPS = [
     ] + [   # (+ 2 ..: the pods opening, 16 + s px out and s up, s = 2, 4 .. 10)
         [('obj1a0', 2, -16 - sp, 6, -sp), ('obj1a0', 2, 16 + sp, 6, -sp, 1), ('obj1a0', 1, 0, 6)]
         for sp in range(2, 12, 2)
+    ],
+    [   # stage 6 large enemy obj212 (palette 7): centre $B59, the wings $B5A d px either
+        # side and 28 - d up (the right one mirrored), closed (d = 28) and open (d = 36);
+        # src/plane.c IMG_O212 (several at once on plane A, formation mode)
+        [('obj212', 1, -28, 7), ('obj212', 1, 28, 7, 0, 1), ('obj212', 0, 0, 7)],
+        [('obj212', 1, -36, 7, -8), ('obj212', 1, 36, 7, -8, 1), ('obj212', 0, 0, 7)],
+    ],
+    [   # the stage 6 boss's last form $B56 (obj210, palette 3): src/plane.c IMG_O210F
+        [('obj210', 5, 0, 3)],
     ],
 ]
 BOMB_REFS = list(range(0xB6, 0xC0)) + list(range(0xAA9, 0xAAF))   # expl2 / expl3 / flare (src/plane.c is_effect)

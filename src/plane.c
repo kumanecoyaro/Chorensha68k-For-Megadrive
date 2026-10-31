@@ -69,6 +69,9 @@ static u16 tbase = ENEMY_BASE;          /* VRAM tile of the loaded group's first
 #define REF_F15    0xB15                /* type $1A1 folded (obj1a0 $B15), opened: REF_O1A1 */
 #define IMG_FM     76                   /* formation mode: + 0 folded, + 1 the pods out, */
                                         /* + 2 .. 6 opening (s = 2, 4 .. 10) */
+#define REF_O212   0xB59                /* stage 6 large enemy obj212: centre $B59, wings $B5A */
+#define IMG_O212   83                   /* (palette 7) closed, + 1 open: formation mode */
+#define FM_PAL(m)  ((u8)((m) - IMG_O212) < 2 ? 7 : 6)   /* (formation mode units: not flashing) */
 #define FM_MAX     16                   /* units looked at (src/plane.c fm_select) */
 #define FM_PL      10                   /* units placed */
 #define FM_BANDS   4                    /* rows of them (each its own horizontal scroll) */
@@ -77,8 +80,9 @@ static u16 tbase = ENEMY_BASE;          /* VRAM tile of the loaded group's first
 #define IMG_O20F   75                   /* the whole of it (palette 8) */
 #define IMG_O21F9  63                   /* obj21f in palette 9 (stage 6; images 3 / 4: palette 7) */
 #define IMG_O210   56                   /* parts $B57 / $B58: $B51, $B52, $B52 + $B58, $B53, $B54, $B53 + $B57, $B55 */
+#define IMG_O210F  85                   /* its last form $B56 */
 #define BOSS_IMG(m) ((m) == 2 || ((m) >= IMG_O205 && (m) < IMG_O1F0) || (u8)((m) - IMG_O216) < 10 \
-                     || (u8)((m) - IMG_O210) < 7)
+                     || (u8)((m) - IMG_O210) < 7 || (m) == IMG_O210F)
 #define LOAD_CHUNK 64                   /* tiles per VBlank (a group borrowing tiles: twice that) */
 #define WROWS      29                   /* plane rows on screen (224 lines + fine scroll) */
 #define WIN_ROWS   32                   /* win[]: the window, or a still image up to 32 rows (obj21a) */
@@ -174,6 +178,9 @@ FmEv fm_ev[FM_EV], act_fm_ev[FM_EV + 1];   /* (act_fm_ev: then a line 0xFF, src/
 u8 fm_nev, act_fm_nev, act_fm_on, fm_evi;
 extern u8 hint_nx;
 extern u16 hint_r1, hint_exp;
+#ifdef TEST_ROWS
+u32 rows_up, rows_fr, rows_shown;
+#endif
 static u8 fm_on;
 static u8 fm_n, fm_ix[FM_MAX];          /* the frame's units: call indices (B15 / B16 calls) */
 static u8 fm_band[FM_MAX];              /* (fm_select: the row a unit is in) */
@@ -361,6 +368,8 @@ static void drop_image_calls(s8 img, Call *c)
             c->id = EMPTY_REF;
         if (img != IMG_O216 && pal_of(c + 1) == 8 && c[1].x == c->x && c[1].y == c->y)
             c[1].id = EMPTY_REF;
+    } else if (img == IMG_O210F) {
+        c->id = EMPTY_REF;              /* (its hit flash too, as its other forms) */
     } else if ((u8)(img - IMG_O210) < 7) {
         u8 k;
         for (k = 0; k < o210_n; k++)       /* (its hit flash too: too large for sprites) */
@@ -903,6 +912,19 @@ static void fm_select(void)
     for (k = 0; k < n; k++) {
         fm_lx[k] = calls[fm_ix[k]].x >> 6; fm_ly[k] = calls[fm_ix[k]].y >> 6; fm_limg[k] = fm_img[k];
     }
+    if ((u8)(fm_img[0] - IMG_O212) < 2) {   /* obj212: each one a band, from the top */
+        fm_col = 0;
+        for (k = 0; k < n; k++) {
+            u8 r = 0;
+            for (j = 0; j < n; j++)
+                r += fm_ly[j] < fm_ly[k] || (fm_ly[j] == fm_ly[k] && j < k);
+            if (r < FM_BANDS) {
+                fm_ix[m] = fm_ix[k]; fm_img[m] = fm_img[k]; fm_band[m] = r; fm_raw[m] = k;
+                m++;
+            }
+        }
+        goto selected;
+    }
     for (k = 0; k < n; k++) {           /* (the columns by x, the rows by y: 20 px for one) */
         const Call *cl = &calls[fm_ix[k]];
         s16 a = cl->x >> 6, b = cl->y >> 6;
@@ -955,6 +977,7 @@ static void fm_select(void)
             }
         }
     }
+  selected:
     fm_rawn = n;
     for (k = 0; k < n; k++)
         fm_rband[k] = 0xFF;
@@ -1075,7 +1098,7 @@ static void fm_write(void)
         for (k = 0; k < fm_rawn; k++)
             if (fm_praw >> k & 1) {
                 Call *cl = &calls[fm_ix[k]];
-                if (pal_of(cl) == 6) {
+                if (pal_of(cl) == FM_PAL(fm_img[k])) {
                     cl->id = EMPTY_REF;
                     if (fm_img[k] != IMG_FM) {
                         cl[-1].id = EMPTY_REF; cl[-2].id = EMPTY_REF;
@@ -1364,7 +1387,7 @@ drop:
         if (u[k].ix & 0x80)
             continue;
         cl = &calls[fm_ix[k]];
-        if (pal_of(cl) == 6) {
+        if (pal_of(cl) == FM_PAL(u[k].img)) {
             cl->id = EMPTY_REF;
             if (u[k].img != IMG_FM) {
                 cl[-1].id = EMPTY_REF; cl[-2].id = EMPTY_REF;
@@ -1404,7 +1427,8 @@ void plane_frame(void)
         }
         big |= id < REF_O21F && id != REF_O1A1 /* (pl_refmap: the bosses and mid bosses below obj21f) */
                && (u16)(id - REF_O21A) > 1      /* (the stage 5 battleship fires no lasers, */
-               && (u16)(id - REF_O20F) > 2;     /* nor obj20F) */
+               && (u16)(id - REF_O20F) > 2      /* nor obj20F, */
+               && (u16)(id - REF_O212) > 1;     /* nor obj212) */
         if (BOSS_IMG(img))              /* (a boss chosen) */
             continue;
         if (id == REF_O216 && (pal_of(c) == 8 || (pal_of(c) >= 14 && (u8)(shown - IMG_O216) < 10))) {
@@ -1416,11 +1440,26 @@ void plane_frame(void)
             boss_seen = 1;
             continue;
         }
+        if (id == REF_O210 + 5 && (pal_of(c) == 3 || (pal_of(c) >= 14 && shown == IMG_O210F))) {
+            best = i;                   /* its last form (hit flash: the image kept) */
+            img = IMG_O210F;
+            boss_seen = 1;
+            continue;
+        }
         if ((u16)(id - REF_O210) <= 4 && !(c->info & 0x4000)
             && (pal_of(c) == 3 || (pal_of(c) >= 14 && (u8)(shown - IMG_O210) < 7))) {
             best = i;                   /* the stage 6 boss (hit flash: the image kept) */
             img = o210_image(c, i);
             boss_seen = 1;
+            continue;
+        }
+        if (id == REF_O212 && fm_n < FM_MAX && (pal_of(c) == 7 || pal_of(c) >= 14) && i >= 2
+            && c[-2].id == REF_O212 + 1 && c[-1].id == REF_O212 + 1 && (c[-1].info & 0x4000)) {
+            s16 d = (c->x >> 6) - (c[-2].x >> 6);   /* obj212: its wings closed or open */
+            if ((d == 28 || d == 36) && (c[-1].x >> 6) - (c->x >> 6) == d
+                && (c->y >> 6) - (c[-2].y >> 6) == d - 28 && c[-1].y == c[-2].y) {
+                fm_ix[fm_n] = i; fm_img[fm_n++] = IMG_O212 + (d == 36);
+            }
             continue;
         }
         if (fm_n < FM_MAX && (pal_of(c) == 6 || pal_of(c) >= 14)) {   /* (hit flash: kept) */
@@ -1915,6 +1954,12 @@ void plane_upload(void)
     }
 #ifdef NO_PLANE_DMA
     wr_n = 0;
+#endif
+#ifdef TEST_ROWS
+    {
+        extern u32 rows_up, rows_fr, rows_shown;
+        rows_up += wr_n; rows_fr += wr_n != 0; rows_shown += shown >= 0;
+    }
 #endif
     for (i = 0; i < wr_n; i++)
         vdp_dma_vram(VRAM_PLANE_A + wr_row[i] * 64, wr_win[i] == 0xFF ? (const void *)zero_row : win[wr_win[i]], 32);
