@@ -74,8 +74,9 @@ u8 text_row0(void)
     return text_grid[0][1] == 'S' && text_grid[0][2] == 'C' ? 4 : 0;
 }
 
-/* HI SCORE / SCORE on top, the ships below (2 rows each, 8 to a row pair:
- * the game gives 10 and more), the bombs (5 at most) in the bottom row */
+/* HI SCORE / SCORE on top, the bombs (5 at most) below them, the ships at
+ * the bottom (2 rows each, 8 to a row pair, more pairs upwards: the game
+ * gives 10 and more) */
 static void hud_build(void)
 {
     static const u8 score[] = "SCORE", hi[] = "HI SCORE";
@@ -94,14 +95,14 @@ static void hud_build(void)
         u8 k = n > r * 8 ? n - r * 8 : 0;
         if (k > 8)
             k = 8;
-        hud_row(7 + r * 2, (const u8 *)"\x06\x06\x06\x06\x06\x06\x06\x06", k);
-        hud_row(8 + r * 2, (const u8 *)"\x07\x07\x07\x07\x07\x07\x07\x07", k);
+        hud_row(26 - r * 2, (const u8 *)"\x06\x06\x06\x06\x06\x06\x06\x06", k);
+        hud_row(27 - r * 2, (const u8 *)"\x07\x07\x07\x07\x07\x07\x07\x07", k);
     }
     for (i = 0; i < 8; i++)
         row[i] = game && i < 5 && text_grid[1][1 + i] == 0x04 ? 0x04 : ' ';
     if (OW(0x4a104))                    /* invincible (the title's up + START) */
         row[7] = '*';
-    hud_row(26, row, 8);
+    hud_row(7, row, 8);
 }
 
 /* called by the vsync hook at the start of VBlank */
