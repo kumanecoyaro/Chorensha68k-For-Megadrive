@@ -18,9 +18,11 @@
  * Each converted stage has its own BG set (tiles, palettes 0 / 1, chip and
  * composite tables: tools/convert_assets.py).  The map scrolls on from one
  * stage into the next; the next stage's set (which also covers the rows of
- * the previous stage still on screen) is switched in while its palette fades
- * in (bg_stage_check), with the display off for the tile upload, and every
- * cell is merged again.
+ * the previous stage still on screen) is switched in at the start of the
+ * original's palette fade (bg_stage_check), with the display off for the
+ * tile upload, and every cell is merged again; its palettes then go from the
+ * same entries in the previous stage's colours (pal_prev) to its own as the
+ * original's do.
  */
 #include "game.h"
 #include "vdp.h"
@@ -66,6 +68,7 @@ void xsp_cache_layout(u16 bg_end);
 static const BgSet *bs = &bg_sets[0];
 static u8 bs_stage = 1;                     /* stage of the set in use */
 static volatile u8 bs_pending;              /* VBlank: upload the set's tiles and palettes */
+static volatile u8 bs_fade;                 /* the original's palette fade into the set's colours */
 /* composite -> slot: open addressing (a stage has up to ~1100 composites,
  * the pool holds COMP_SLOTS of them) */
 #define SOF_SIZE 128
@@ -414,8 +417,9 @@ void bg_stage_check(void)
     if (st < bs_stage) {
         ocall(OFN(0x05906), (st - 1) * 8, 0x10, 0, 0);
         x_bg_full();
-    } else if (OW(0x59326) >= 0x40) {
+    } else {                                /* (the start of the palette fade) */
         set_select(st);
+        bs_fade = 1;
         merge_all();
     }
 }
@@ -518,9 +522,27 @@ void bg_chips(void)
         sound_dma(1);
         dma_rom(32, bs->tiles, bs->ntiles * 16);
         sound_dma(0);
-        vdp_set_palettes(bs->pal, 32);
+        vdp_set_palettes(bs_fade ? bs->pal_prev : bs->pal, 32);
         vdp_display(1);
         bs_pending = 0;
+    } else if (bs_fade) {
+        /* stage n's state $100: the original fades the BG palette from the
+         * previous stage's colours over $80 frames (fn_0479a, timer $59326) */
+        u16 t = OUW(0x59326), k;
+        if (OW(0x59328) != 0x100 || t >= 0x80) {
+            vdp_set_palettes(bs->pal, 32);
+            bs_fade = 0;
+        } else {
+            VDP_CTRL32 = CRAM_W(0);
+            for (k = 0; k < 32; k++) {
+                u16 a = bs->pal_prev[k], b = bs->pal[k], o = 0, sh;
+                for (sh = 1; sh < 12; sh += 4) {
+                    s16 ca = (a >> sh) & 7, cb = (b >> sh) & 7;
+                    o |= (u16)(ca + (((cb - ca) * (s16)t + 64) >> 7)) << sh;
+                }
+                VDP_DATA = o;
+            }
+        }
     }
     n = upq_n;
     for (i = 0; i < n; i++) {

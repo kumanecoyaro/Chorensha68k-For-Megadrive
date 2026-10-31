@@ -43,22 +43,32 @@ def md_word(c):
     r, g, b = c
     return (b << 9) | (g << 5) | (r << 1)
 
+def cdist(a, b):
+    """colour distance; 6-tuples (this stage's colour, the previous stage's:
+    the set fades in from those, src/bg.c) weigh the second half by 1/2"""
+    d = 3 * (a[0] - b[0]) ** 2 + 4 * (a[1] - b[1]) ** 2 + 2 * (a[2] - b[2]) ** 2
+    if len(a) > 3:
+        d += (3 * (a[3] - b[3]) ** 2 + 4 * (a[4] - b[4]) ** 2 + 2 * (a[5] - b[5]) ** 2) / 2
+    return d
+
 def quantize(counter, n=15):
     """Weighted k-means in 3-bit RGB space; returns list of <= n colors."""
     cols = list(counter.items())
     if len(cols) <= n:
         return [c for c, _ in sorted(cols, key=lambda t: -t[1])]
     cent = [c for c, _ in sorted(cols, key=lambda t: -t[1])[:n]]
-    def d2(a, b):
-        return 3 * (a[0] - b[0]) ** 2 + 4 * (a[1] - b[1]) ** 2 + 2 * (a[2] - b[2]) ** 2
+    d2 = cdist
     for _ in range(20):
-        acc = [[0, 0, 0, 0] for _ in cent]
+        acc = [[0] * (len(cent[0]) + 1) for _ in cent]
         for c, w in cols:
             k = min(range(len(cent)), key=lambda i: d2(c, cent[i]))
-            a = acc[k]; a[0] += c[0] * w; a[1] += c[1] * w; a[2] += c[2] * w; a[3] += w
+            a = acc[k]
+            for i in range(len(c)):
+                a[i] += c[i] * w
+            a[-1] += w
         new = []
         for a, old in zip(acc, cent):
-            new.append(tuple(int(round(a[i] / a[3])) for i in range(3)) if a[3] else old)
+            new.append(tuple(int(round(a[i] / a[-1])) for i in range(len(old))) if a[-1] else old)
         if new == cent:
             break
         cent = new
@@ -78,12 +88,10 @@ class PalGroup:
     def index(self, rgb):
         c = md_rgb(rgb)
         if c not in self.cache:
-            self.cache[c] = 1 + min(range(len(self.colors)), key=lambda i:
-                3 * (c[0] - self.colors[i][0]) ** 2 + 4 * (c[1] - self.colors[i][1]) ** 2 +
-                2 * (c[2] - self.colors[i][2]) ** 2)
+            self.cache[c] = 1 + min(range(len(self.colors)), key=lambda i: cdist(c, self.colors[i]))
         return self.cache[c]
-    def cram(self):
-        cols = [(0, 0, 0)] + self.colors + [(0, 0, 0)] * (15 - len(self.colors))
+    def cram(self, prev=False):
+        cols = [(0, 0, 0)] + [c[3:] if prev else c[:3] for c in self.colors] + [(0, 0, 0)] * (15 - len(self.colors))
         return [md_word(c) for c in cols]
 
 def tile_bytes(px):
@@ -100,8 +108,10 @@ class TileSet:
         return self.index[data]
 
 # ---------------------------------------------------------------- main
-def convert_stage(palfile, rows, chips, bgpcg, m0, m1, A):
+def convert_stage(palfile, rows, chips, bgpcg, m0, m1, A, prevfile=None):
     bgpal = load_pal(A(palfile))
+    prevpal = load_pal(A(prevfile)) if prevfile else bgpal
+    bgpal = [a + b for a, b in zip(bgpal, prevpal)]  # (this stage's colour, the previous stage's)
 
     # ---- palettes
     g_far, g_near = PalGroup('far'), PalGroup('near')
@@ -116,6 +126,10 @@ def convert_stage(palfile, rows, chips, bgpcg, m0, m1, A):
                 if v:
                     g.add(bgpal[v], n)
     g_far.build(); g_near.build()
+    # the same entries in the previous stage's colours (the set is switched in
+    # at the start of the original's palette fade from those: bg.c fades
+    # from pal_prev to pal)
+    pal_prev = g_far.cram(True) + g_near.cram(True)
 
     # ---- BG tiles + chips (MD palette 0 = far layer, 1 = near layer)
     bgtiles = TileSet(base=1)            # tile 0 = blank
@@ -145,9 +159,7 @@ def convert_stage(palfile, rows, chips, bgpcg, m0, m1, A):
                 if t[(7 - y if wd & 0x8000 else y) * 8 + (7 - x if wd & 0x4000 else x)] else 0
                 for y in range(8) for x in range(8)]
     def colerr(rgb, g):
-        c = md_rgb(rgb); k = g.index(rgb) - 1
-        q = g.colors[k]
-        return 3 * (c[0] - q[0]) ** 2 + 4 * (c[1] - q[1]) ** 2 + 2 * (c[2] - q[2]) ** 2
+        return cdist(md_rgb(rgb), g.colors[g.index(rgb) - 1])
     far_list = sorted(used1)
     far_ix = [0xFF] * 256
     for i, ch in enumerate(far_list):
@@ -189,7 +201,7 @@ def convert_stage(palfile, rows, chips, bgpcg, m0, m1, A):
     for ch in range(256):                      # by original chip number, unused -> 0
         cn += chip_near.get(ch, [0] * 16)
         cf += chip_far.get(ch, [0] * 16)
-    return dict(pal=g_far.cram() + g_near.cram(), tiles=b''.join(bgtiles.tiles), chip_near=cn, chip_far=cf,
+    return dict(pal=g_far.cram() + g_near.cram(), pal_prev=pal_prev, tiles=b''.join(bgtiles.tiles), chip_near=cn, chip_far=cf,
                 far_ix=far_ix, near_mix=near_mix, comp=sum(comp, []), nfar=len(far_list),
                 comp_tiles=b''.join(comp_tiles.tiles), ncomp=len(comp_tiles.tiles))
 
@@ -200,7 +212,8 @@ def main(xpath, xsp_dir, out_dir):
     bgpcg = open(A('bg_pcg.sp'), 'rb').read()
     _, _, m0 = load_map(A('map.bg0'))
     _, _, m1 = load_map(A('map.bg1'))
-    sets = [convert_stage(pf, seg_rows(segs), chips, bgpcg, m0, m1, A) for pf, segs in STAGES]
+    sets = [convert_stage(pf, seg_rows(segs), chips, bgpcg, m0, m1, A, STAGES[k - 1][0] if k else None)
+            for k, (pf, segs) in enumerate(STAGES)]
     font_base = 0xF000 // 32           # VRAM 0xF000-0xFFFF: text font (convert_sprites.py)
 
     # ---------------------------------------------------------------- write C
@@ -217,6 +230,7 @@ def main(xpath, xsp_dir, out_dir):
     out.append(arr('const u16', 'pal_data', sets[0]['pal'] + [0] * 32, fmt='0x{:03x}'))
     for k, st in enumerate(sets):
         out.append(arr('static const u16', f'bg_pal_{k}', st['pal'], fmt='0x{:03x}'))
+        out.append(arr('static const u16', f'bg_pal_prev_{k}', st['pal_prev'], fmt='0x{:03x}'))
         out.append(arr('static const u32', f'bg_tiles_{k}', words(st['tiles']) or [0], 8, '0x{:08x}'))
         out.append(arr('static const u16', f'chip_near_{k}', st['chip_near'], fmt='0x{:04x}'))
         out.append(arr('static const u16', f'chip_far_{k}', st['chip_far'], fmt='0x{:04x}'))
@@ -226,7 +240,7 @@ def main(xpath, xsp_dir, out_dir):
         out.append(arr('static const u32', f'bg_comp_tiles_{k}', words(st['comp_tiles']) or [0], 8, '0x{:08x}'))
     out.append(f'const BgSet bg_sets[{len(sets)}] = {{')
     for k, st in enumerate(sets):
-        out.append(f'  {{bg_pal_{k}, bg_tiles_{k}, {len(st["tiles"]) // 32}, chip_near_{k}, chip_far_{k},'
+        out.append(f'  {{bg_pal_{k}, bg_pal_prev_{k}, bg_tiles_{k}, {len(st["tiles"]) // 32}, chip_near_{k}, chip_far_{k},'
                    f' bg_far_ix_{k}, bg_near_mix_{k}, bg_comp_{k}, bg_comp_tiles_{k}, {st["nfar"]}, {st["ncomp"]}}},')
     out.append('};')
     open(os.path.join(out_dir, 'assets.c'), 'w').write('\n'.join(out) + '\n')
@@ -238,7 +252,7 @@ def main(xpath, xsp_dir, out_dir):
          '/* one stage\'s BG (src/bg.c): MD palettes 0 / 1, tiles (from VRAM tile 1), chip words by',
          '   original chip number (near / far layer), composites of mixed near tiles over far chips */',
          'typedef struct {',
-         '    const u16 *pal; const u32 *tiles; u16 ntiles;',
+         '    const u16 *pal, *pal_prev; const u32 *tiles; u16 ntiles;   /* pal_prev: in the previous stage\'s colours */',
          '    const u16 *chip_near, *chip_far;',
          '    const u8 *far_ix, *near_mix;      /* far chip -> index (0xFF: none), near tile -> mixed + 1 */',
          '    const u16 *comp; const u32 *comp_tiles;   /* comp[(mixed) * nfar + far index] */',
