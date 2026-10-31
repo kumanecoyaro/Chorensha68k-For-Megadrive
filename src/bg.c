@@ -431,6 +431,7 @@ volatile u8 bg_on;                          /* (plane.c: plane B follows plane A
  * busy): rows 0..27 of its table, written in the VBlank (tb_vblank) when the
  * text changed (tb_dirty), cleared before anything is drawn into plane B
  * (bg_drawn: no text there any more until the next x_screen_clear) */
+volatile u32 tb_rdirty;                     /* text rows changed (x68.c x_text_putc) */
 u8 tb_dirty, bg_drawn;                      /* (tb_rows: the plane B rows holding text) */
 extern u8 act_tb;
 static void tb_clear(void)                  /* (main program: IRQs off for each piece) */
@@ -463,24 +464,28 @@ void tb_vblank(void)
         tb_dirty = 1;
         return;
     }
-    if (!tb_dirty)
-        return;
-    tb_dirty = 0;
-    r0 = text_row0();
-    for (r = r0; r < 28; r++)
-        if (text_row_mask[text_map[r]])
-            now |= 1UL << r;
-    for (r = 0; r < 28; r++)
-        if ((now | tb_rows) >> r & 1) {
-            const u8 *t = text_grid[text_map[r]];
-            VDP_CTRL32 = VRAM_W(VRAM_PLANE_B + r * 64);
-            if (now >> r & 1)
-                for (c = 0; c < 32; c++, t++)
-                    VDP_DATA = *t ? 0x8000 | (TEXT_PAL << 13) | (FONT_TILE_BASE + (*t & 0x7F)) : 0;
-            else
-                for (c = 0; c < 32; c++)
-                    VDP_DATA = 0;
-        }
+    {
+        u32 d = tb_rdirty;
+        tb_rdirty = 0;
+        if (!tb_dirty && !d)
+            return;
+        r0 = text_row0();
+        for (r = r0; r < 28; r++)
+            if (text_row_mask[text_map[r]])
+                now |= 1UL << r;
+        for (r = 0; r < 28; r++)
+            if ((now | tb_rows) >> r & 1 && (tb_dirty || (d >> text_map[r] & 1) || !((now & tb_rows) >> r & 1))) {
+                const u8 *t = text_grid[text_map[r]];
+                VDP_CTRL32 = VRAM_W(VRAM_PLANE_B + r * 64);
+                if (now >> r & 1)
+                    for (c = 0; c < 32; c++, t++)
+                        VDP_DATA = *t ? 0x8000 | (TEXT_PAL << 13) | (FONT_TILE_BASE + (*t & 0x7F)) : 0;
+                else
+                    for (c = 0; c < 32; c++)
+                        VDP_DATA = 0;
+            }
+        tb_dirty = 0;
+    }
     tb_rows = now;
 }
 

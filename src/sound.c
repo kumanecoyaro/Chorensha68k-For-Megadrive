@@ -31,8 +31,6 @@ u16 qmax_after, qmax_frame, qdrop, ring_back_max, ring_back_sfx;
 #endif
 static u8 req_no;
 static u16 play_pr, play_frames;
-u8 sfx_duck;                        /* a loud effect plays: the music steps back (music.c) */
-#define DUCK_PR 0x44                /* the player's bomb, the big explosions, misses, items ... */
 
 #define QMAX 960                    /* (src/music.c YM_QMAX) */
 u8 queue[QMAX];                 /* pending 3-byte writes: part offset, reg, value */
@@ -226,7 +224,6 @@ void sound_update(void)
         ym_put(1, 0xB6, music_pan6);
         ym_shadow[1][0xB6 - 0x20] = music_pan6;
         dac_on = 0;
-        sfx_duck = 0;
     }
     if (req_no) {
         e = &pcm_table[req_no];
@@ -259,7 +256,6 @@ void sound_update(void)
         Z80_RAM[0x1FF6] = (u8)(len >> 8);
         Z80_RAM[0x1FF7] = (u8)(len >> 16);
         play_pr = e->priority;
-        sfx_duck = play_pr >= DUCK_PR;
         start = 1;
         play_frames = (u16)((len * 295) >> 16) + 2; /* 13317 Hz: ~222 samples per frame */
     }

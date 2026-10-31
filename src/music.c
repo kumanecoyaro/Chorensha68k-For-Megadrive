@@ -153,15 +153,9 @@ static const u8 *find_voice(u8 no)
  * DAC playing the sound effects only has one FM channel's level */
 #define MUSIC_ATT 8
 
-/* while a loud sound effect plays (sound.c: sfx_duck) the FM music is
- * lowered by DUCK_ATT more: the DAC has one FM channel's level at most */
-#define DUCK_ATT 10
-extern u8 sfx_duck;
-static u8 duck;
-
 static s16 atten(const MCh *c)
 {
-    return (c->atvol >= 0 ? c->atvol : vol_table[c->vol]) + MUSIC_ATT + (duck ? DUCK_ATT : 0);
+    return (c->atvol >= 0 ? c->atvol : vol_table[c->vol]) + MUSIC_ATT;
 }
 
 /* the operators' TL: the carriers get the channel's attenuation.  Written
@@ -729,13 +723,6 @@ void music_update(void)
             tick_acc -= 0x10000;
             tick();
         }
-    }
-    if (duck != sfx_duck) {             /* every FM channel's level again */
-        MCh *c;
-        duck = sfx_duck;
-        for (c = ch; c < ch + NCH; c++)
-            if (c->kind < 0x10)
-                fm_tl(c, c->ma_act ? (s16)shr8(&c->ma.val) : 0);
     }
     {
         /* the LFOs (vibrato, tremolo) are applied every other VBlank, half

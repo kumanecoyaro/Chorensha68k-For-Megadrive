@@ -31,27 +31,29 @@ static u16 hud_tile(u8 i)               /* glyph i (< 22): +$20 / +$60 of window
     return (VRAM_WINDOW + (i >> 1) * 128 + ((i & 1) ? 0x60 : 0x20)) / 32;
 }
 
+/* character -> the cell (computed once: hud_init) */
+static u8 hud_map[128];
 static u16 hud_cell(u8 c)
 {
-    u8 i;
-    if ((u8)(c - '0') < 10)
-        return HUD_ATTR | hud_tile(c - '0' + 1);
-    for (i = 11; hud_chars[i] && (u8)hud_chars[i] != c; i++)
-        ;
-    return HUD_ATTR | hud_tile(hud_chars[i] ? i : 0);
+    return HUD_ATTR | hud_tile(hud_map[c & 127]);
 }
 
 static void hud_row(u8 r, const u8 *s, u8 n)    /* panel row r: n characters (the rest blank) */
 {
     u8 i;
+    u16 b = hud_cell(' ');
     VDP_CTRL32 = VRAM_W(VRAM_WINDOW + r * 128 + 64);
     for (i = 0; i < 8; i++)
-        VDP_DATA = hud_cell(i < n ? s[i] : ' ');
+        VDP_DATA = i < n ? hud_cell(s[i]) : b;
 }
 
 static void hud_init(void)
 {
     u8 i, r, k;
+    for (i = 0; i < 128; i++)
+        hud_map[i] = 0;
+    for (i = 0; hud_chars[i]; i++)
+        hud_map[(u8)hud_chars[i]] = i;
     for (i = 0; hud_chars[i]; i++) {    /* the glyphs, background colour 2 (black) */
         const u32 *t = &text_font[(u8)hud_chars[i] * 8];
         VDP_CTRL32 = VRAM_W(hud_tile(i) * 32);
@@ -82,11 +84,29 @@ static void hud_build(void)
 {
     static const u8 score[] = "SCORE", hi[] = "HI SCORE";
     static const u8 ships[] = "\x04\x04\x04\x04\x04\x04\x04\x04";
+    static u8 l_game = 0xFF, l_n = 0xFF, l_b = 0xFF, l_hi[8], l_sc[8];
     u8 game = text_row0() != 0, n = 0, b = 0, r, top[8], bot[8], i;
-    hud_row(1, hi, game ? 8 : 0);
-    hud_row(2, &text_grid[0][23], game ? 8 : 0);
-    hud_row(4, score, game ? 5 : 0);
-    hud_row(5, &text_grid[0][4], game ? 8 : 0);
+    const u8 *sh = &text_grid[0][23], *sc = &text_grid[0][4];
+    u8 all = game != l_game;
+    l_game = game;
+    if (all) {
+        hud_row(1, hi, game ? 8 : 0);
+        hud_row(4, score, game ? 5 : 0);
+    }
+    for (i = 0; i < 8 && sh[i] == l_hi[i]; i++)
+        ;
+    if (all || i < 8) {
+        hud_row(2, sh, game ? 8 : 0);
+        for (i = 0; i < 8; i++)
+            l_hi[i] = sh[i];
+    }
+    for (i = 0; i < 8 && sc[i] == l_sc[i]; i++)
+        ;
+    if (all || i < 8) {
+        hud_row(5, sc, game ? 8 : 0);
+        for (i = 0; i < 8; i++)
+            l_sc[i] = sc[i];
+    }
     if (game) {
         while (n < 31 && text_grid[1][1 + n] == 0x04)
             n++;
@@ -96,16 +116,28 @@ static void hud_build(void)
 #ifdef HUD_TEST
     n = HUD_TEST;
 #endif
-    for (r = 0; r < 18; r++)
-        hud_row(7 + r, ships, n > r * 8 ? (n - r * 8 > 8 ? 8 : n - r * 8) : 0);
-    for (i = 0; i < 8; i++) {
-        top[i] = i < b ? 0x06 : ' ';
-        bot[i] = i < b ? 0x07 : ' ';
+    if (OW(0x4a104))                    /* invincible (the title's up + START): bit 3 */
+        b |= 8;
+    if (all || n != l_n) {
+        for (r = 0; r < 18; r++) {
+            u8 k = n > r * 8 ? (n - r * 8 > 8 ? 8 : n - r * 8) : 0;
+            u8 lk = l_n != 0xFF && l_n > r * 8 ? (l_n - r * 8 > 8 ? 8 : l_n - r * 8) : 0;
+            if (all || k != lk)
+                hud_row(7 + r, ships, k);
+        }
+        l_n = n;
     }
-    if (OW(0x4a104))                    /* invincible (the title's up + START) */
-        top[7] = '*';
-    hud_row(26, top, 8);
-    hud_row(27, bot, 8);
+    if (all || b != l_b) {
+        for (i = 0; i < 8; i++) {
+            top[i] = i < (b & 7) ? 0x06 : ' ';
+            bot[i] = i < (b & 7) ? 0x07 : ' ';
+        }
+        if (b & 8)
+            top[7] = '*';
+        hud_row(26, top, 8);
+        hud_row(27, bot, 8);
+        l_b = b;
+    }
 }
 
 /* called by the vsync hook at the start of VBlank */

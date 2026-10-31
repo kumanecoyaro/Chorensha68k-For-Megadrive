@@ -531,7 +531,8 @@ static u32 text_rows(void)
 }
 
 /* nothing drawn into plane B since the screen was cleared (no BG: the
- * ranking, the name entry) and plane A busy (a large enemy, effects): the text rows into plane B instead of
+ * ranking, the name entry): the text rows always in plane B (high priority,
+ * in front of plane A's large enemies and the sprites), not plane A or
  * sprites (src/bg.c tb_*: plane B then shows its own table, unscrolled) */
 extern u8 tb_dirty, bg_drawn;
 static u8 text_b_mode(void)
@@ -570,7 +571,7 @@ static void write_text(void)
  * text; 0 = the sprites show it */
 u8 plane_text_refresh(void)
 {
-    if (st_img != ST_TEXT && (shown >= 0 || was_fx || st_img >= 0))
+    if (!bg_drawn || (st_img != ST_TEXT && (shown >= 0 || was_fx || st_img >= 0)))
         return text_on_plane = text_b_mode();
     hs = vs = 0;
     split = 0;
@@ -1723,7 +1724,7 @@ void plane_frame(void)
     if (!fx && !was_fx) {
         u32 cols = img >= 0 ? visible_cols(&plane_img[img], hs) : 0;
         wr_n = 0;
-        if (img < 0 && text_rows()) {   /* plane A free: the text rows */
+        if (img < 0 && bg_drawn && text_rows()) {   /* plane A free: the text rows */
             st_img2 = -1;
             if (st_img != ST_TEXT || text_pl_dirty)
                 write_text();
