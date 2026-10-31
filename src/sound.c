@@ -1,0 +1,277 @@
+/*
+ * Sound: PCM sound effects + YM2612 write queue (replaces MCDRV).
+ *
+ * Samples are stored in ROM already converted to 8-bit unsigned PCM at the
+ * driver's rate (13317 Hz, tools/convert_pcm.py) and streamed by the Z80 to
+ * the YM2612 DAC (tools/z80_pcm_driver.py: paced by YM2612 timer A, read
+ * ahead into Z80 RAM; sound_dma() tells it not to touch ROM during VDP DMA).  The Z80 also performs every YM2612 register
+ * write: ym_write() queues them and sound_update() copies the queue into the
+ * Z80 ring buffer once per frame.  FM channel 6 is lent to the DAC only while
+ * a sound effect plays.
+ *
+ * sound_request() mirrors fn_034ae: one request per frame, a request with
+ * higher-or-equal priority (PR= in SZ2_PCM.CNF) replaces the pending one.
+ */
+#include "game.h"
+#include "pcm.h"
+
+#define Z80_RAM    ((volatile u8 *)0xA00000)
+#define Z80_BUSREQ (*(volatile u16 *)0xA11100)
+#define Z80_RESET  (*(volatile u16 *)0xA11200)
+#define RING       0x1D00
+#define RING_RD    0x1FFC
+#define RING_WR    0x1FFD
+
+extern const u8 z80_driver[];
+extern const u16 z80_driver_size;
+
+#ifdef Z80_PEEK
+u8 z80_peek[64][4];
+u16 qmax_after, qmax_frame, qdrop, ring_back_max, ring_back_sfx;
+#endif
+static u8 req_no;
+static u16 play_pr, play_frames;
+
+#define QMAX 960                    /* (src/music.c YM_QMAX) */
+u8 queue[QMAX];                 /* pending 3-byte writes: part offset, reg, value */
+u16 qlen;
+u8 ym_shadow[2][0xA0];         /* last value written to $20..$BF ($30..: all written once by sound_init) */
+static u8 dac_on;
+static u8 music_pan6 = 0xC0;   /* FM6 pan wanted by the music ($B6, shared with the DAC) */
+
+static void z80_get_bus(void)
+{
+    Z80_BUSREQ = 0x100;
+    while (Z80_BUSREQ & 0x100)
+        ;
+}
+
+static void z80_release_bus(void)
+{
+    Z80_BUSREQ = 0;
+}
+
+#ifdef YM_LOG
+u16 ym_log_n;
+u8 ym_log[6000 * 4];
+#endif
+
+
+/* move queued writes into the Z80 ring; returns the number of bytes moved
+ * (bus must not be held by the caller) */
+u16 ym_flush(void)
+{
+    u16 i, n;
+    u8 rd, room;
+    u16 wr;
+    if (!qlen)
+        return 0;
+    z80_get_bus();
+    rd = Z80_RAM[RING_RD];
+    wr = Z80_RAM[RING_WR];
+#ifdef Z80_PEEK
+    {   /* ring entries the Z80 has not written yet when the next frame's batch arrives */
+        extern u16 ring_back_max, ring_back_sfx;
+        u8 back = (u8)(wr - rd);
+        if (back > ring_back_max) ring_back_max = back;
+        if (play_frames && back > ring_back_sfx) ring_back_sfx = back;
+    }
+#endif
+    room = (u8)(rd - wr - 1);
+    n = qlen;
+    if (n > room)
+        n = room - room % 3;
+    {   /* copy in at most two runs (the ring wraps at 256) */
+        const u8 *src = queue;
+        u16 left = n;
+        while (left) {
+            u16 run = 256 - wr;
+            volatile u8 *dst = &Z80_RAM[RING + wr];
+            if (run > left)
+                run = left;
+            left -= run;
+            wr = (wr + run) & 255;
+            while (run--)
+                *dst++ = *src++;
+        }
+    }
+    Z80_RAM[RING_WR] = wr;
+    z80_release_bus();
+    for (i = n; i < qlen; i++)
+        queue[i - n] = queue[i];
+    qlen -= n;
+    return n;
+}
+
+/* never drops a write: when the queue is full, wait for the Z80 to make room */
+void ym_put(u8 part, u8 reg, u8 val)
+{
+#ifdef Z80_PEEK
+    { extern u16 qdrop; if (qlen + 3 > QMAX) qdrop++; }   /* times we had to wait */
+#endif
+#ifdef YM_LOG
+#ifndef YM_LOG_FROM
+#define YM_LOG_FROM 0
+#endif
+    if (ym_log_n < 6000 && frame_count >= YM_LOG_FROM) {
+        u8 *l = &ym_log[ym_log_n++ * 4];
+        l[0] = (u8)frame_count; l[1] = part; l[2] = reg; l[3] = val;
+    }
+#endif
+    while (qlen + 3 > QMAX)
+        ym_flush();
+    queue[qlen++] = part << 1;
+    queue[qlen++] = reg;
+    queue[qlen++] = val;
+}
+
+/* a driver command in the queue ($FF start the effect set up at $1FF1) */
+static void ym_cmd(u8 c)
+{
+    while (qlen + 3 > QMAX)
+        ym_flush();
+    queue[qlen++] = c;
+    queue[qlen++] = 0;
+    queue[qlen++] = 0;
+}
+
+/* part 0/1.  Key-on ($28) and frequency ($A0-$AF) writes are never
+ * filtered: $A4-$A6 go to a latch shared by all channels that is only
+ * applied by the following $A0-$A2 write, so they must always come as a pair. */
+void ym_write(u8 part, u8 reg, u8 val)
+{
+    if (part == 1 && reg == 0xB6) {             /* the DAC uses FM6's pan */
+        music_pan6 = val;
+        if (dac_on)
+            return;
+    }
+    if (reg != 0x28 && (reg & 0xF0) != 0xA0 && ym_shadow[part][reg - 0x20] == val)
+        return;
+    ym_shadow[part][reg - 0x20] = val;
+    ym_put(part, reg, val);
+}
+
+void psg_write(u8 v)
+{
+    *(volatile u8 *)0xC00011 = v;
+}
+
+void sound_init(void)
+{
+    u16 i;
+    /* Z80 RAM is only reachable with the bus granted and reset released */
+    Z80_RESET = 0x100;
+    z80_get_bus();
+    for (i = 0; i < z80_driver_size; i++)
+        Z80_RAM[i] = z80_driver[i];
+    for (i = 0x1D00; i < 0x2000; i++)
+        Z80_RAM[i] = 0;
+    Z80_RESET = 0;                  /* reset pulse, then run from $0000 */
+    for (i = 0; i < 32; i++)
+        __asm__ volatile("nop");
+    Z80_RESET = 0x100;
+    z80_release_bus();
+    qlen = 0;
+    for (i = 0; i < 0x10; i++)          /* ($20..$2F: global, unknown; never 0xFF from the music) */
+        ym_shadow[0][i] = ym_shadow[1][i] = 0xFF;
+    for (i = 0x10; i < 0xA0; i++) {     /* the channel registers: a known start */
+        ym_shadow[0][i] = ym_shadow[1][i] = 0;
+        ym_put(0, 0x20 + i, 0);
+        ym_put(1, 0x20 + i, 0);
+    }
+    dac_on = 0;
+    req_no = 0;
+    play_frames = 0;
+    ym_put(0, 0x2B, 0x00);          /* DAC off: FM6 belongs to the music */
+}
+
+/* VBlank: VDP DMA is about to start / is over.  A Z80 access to the 68000
+ * bus during DMA stalls the Z80 for the whole transfer: it plays from its
+ * read-ahead buffer meanwhile. */
+void sound_dma(u8 on)
+{
+    z80_get_bus();
+    Z80_RAM[0x1FE2] = on;
+    z80_release_bus();
+}
+
+/* fn_034ae */
+#ifdef TEST_SNDLOG
+u8 snd_log[256][2];                     /* (debug) requests: number, frame */
+u8 snd_log_n;
+u8 snd_play[64], snd_play_n;             /* (debug) effects started */
+#endif
+void sound_request(u8 no)
+{
+#ifdef TEST_SNDLOG
+    if (no != 0x20) {
+        snd_log[snd_log_n][0] = no; snd_log[snd_log_n][1] = 0; snd_log_n++;
+    }
+#endif
+#ifdef NO_SFX
+    return;
+#endif
+    if (!pcm_table[no].length)
+        return;
+    if (req_no && pcm_table[no].priority < pcm_table[req_no].priority)
+        return;
+    req_no = no;
+}
+
+/* once per frame: start a pending effect, flush queued YM2612 writes */
+void sound_update(void)
+{
+    const PcmEntry *e = NULL;
+    u8 start = 0;
+
+    if (play_frames && --play_frames == 0) {
+        ym_put(0, 0x2B, 0x00);      /* effect over: FM6 back to the music */
+        ym_put(1, 0xB6, music_pan6);
+        ym_shadow[1][0xB6 - 0x20] = music_pan6;
+        dac_on = 0;
+    }
+    if (req_no) {
+        e = &pcm_table[req_no];
+        req_no = 0;
+        if (play_frames && e->priority < play_pr)
+            e = NULL;
+    }
+#ifdef TEST_SNDLOG
+    if (e) {
+        snd_play[snd_play_n & 63] = (u8)(e - pcm_table); snd_play_n++;
+    }
+#endif
+    if (e) {
+        ym_put(0, 0x2B, 0x80);      /* DAC on, centred */
+        ym_put(1, 0xB6, 0xC0);
+        ym_shadow[1][0xB6 - 0x20] = 0xC0;
+        dac_on = 1;
+    }
+
+    z80_get_bus();
+    if (e) {
+        /* volatile: keep gcc from turning (len >> 8) into an odd-address word load */
+        u32 len = *(const volatile u32 *)&e->length;
+        u32 a = (u32)pcm_data + e->offset;
+        Z80_RAM[0x1FF1] = (u8)a;
+        Z80_RAM[0x1FF2] = (u8)((a >> 8) & 0x7F) | 0x80;
+        Z80_RAM[0x1FF3] = (u8)(a >> 15);
+        Z80_RAM[0x1FF4] = (u8)(a >> 23);
+        Z80_RAM[0x1FF5] = (u8)len;
+        Z80_RAM[0x1FF6] = (u8)(len >> 8);
+        Z80_RAM[0x1FF7] = (u8)(len >> 16);
+        play_pr = e->priority;
+        start = 1;
+        play_frames = (u16)((len * 295) >> 16) + 2; /* 13317 Hz: ~222 samples per frame */
+    }
+    z80_release_bus();
+    if (start)
+        ym_cmd(0xFF);               /* start (after the DAC enable queued above) */
+    ym_flush();
+#ifdef Z80_PEEK
+    {
+        extern u16 qmax_after, qmax_frame, qdrop, ring_back_max, ring_back_sfx;
+        if (qlen > qmax_after) { qmax_after = qlen; qmax_frame = frame_count; }
+    }
+#endif
+}
