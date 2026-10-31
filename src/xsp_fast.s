@@ -640,6 +640,7 @@ xsp_build:
     move.w  %d0, -(%sp)                 | (sp) = current priority
     clr.w   dbl_n
     clr.w   dbl_rn
+    move.w  #0xFFFF, pcg_lkey
 1:  move.w  (%sp), %d0
     lea     bhead, %a1
 41: cmp.w   pr_lo, %d0                  | (empty priorities skipped here)
@@ -730,6 +731,11 @@ xsp_build:
     and.w   #15, %d2                    | palette
     lsl.w   #4, %d4
     or.w    %d2, %d4                    | key
+    cmp.w   pcg_lkey, %d4               | (the same as the last single PCG: its
+    bne.s   19f                         | attribute; bullets come in runs)
+    move.w  pcg_lattr, %d4
+    bra.s   13f
+19: move.w  %d4, pcg_ckey
     move.w  %d4, %d5
     lsr.w   #7, %d5
     eor.w   %d4, %d5
@@ -742,7 +748,9 @@ xsp_build:
 11: add.w   %d2, %d2
     lea     pal_attr, %a1
     or.w    0(%a1,%d2.w), %d4
-    and.w   #0xC000, %d3
+    move.w  %d4, pcg_lattr
+    move.w  pcg_ckey, pcg_lkey
+13: and.w   #0xC000, %d3
     lsr.w   #3, %d3                     | flips -> attr bits 11/12
     or.w    %d3, %d4
     cmp.w   #BULLET_PR, 2(%sp)
@@ -1621,7 +1629,11 @@ pl_n:        .word 0                    | calls src/plane.c looks at: count, ind
 pl_ix:       .space 64
 hw_limit:    .word 0
 fx_cap:      .word 0
-pair_two:    .byte 0                    | xsp_build: the pair at hand drawn as two sprites
+pair_two:    .byte 0
+    .balign 2
+pcg_lkey:    .word 0                    | xsp_build: the last single PCG's key, attribute
+pcg_lattr:   .word 0
+pcg_ckey:    .word 0                    | xsp_build: the pair at hand drawn as two sprites
     .balign 2
     .globl  dbl_n, dbl_rn, dbl_slot, dbl_b, dbl_on
 dbl_on:      .byte 0                    | (src/xsp.c: sprites have been running short)
