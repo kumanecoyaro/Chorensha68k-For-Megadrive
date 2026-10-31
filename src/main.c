@@ -74,35 +74,37 @@ u8 text_row0(void)
     return text_grid[0][1] == 'S' && text_grid[0][2] == 'C' ? 4 : 0;
 }
 
-/* HI SCORE / SCORE on top, the bombs (5 at most) below them, the ships at
- * the bottom (2 rows each, 8 to a row pair, more pairs upwards: the game
- * gives 10 and more) */
+/* HI SCORE / SCORE on top, the ships below them (text row 1: 8 to a row,
+ * the game gives 10 and more), the bombs (rows 2..3, 2 cells tall, 5 at
+ * most) at the bottom */
 static void hud_build(void)
 {
     static const u8 score[] = "SCORE", hi[] = "HI SCORE";
-    u8 game = text_row0() != 0, n = 0, r, row[8], i;
+    static const u8 ships[] = "\x04\x04\x04\x04\x04\x04\x04\x04";
+    u8 game = text_row0() != 0, n = 0, b = 0, r, top[8], bot[8], i;
     hud_row(1, hi, game ? 8 : 0);
     hud_row(2, &text_grid[0][23], game ? 8 : 0);
     hud_row(4, score, game ? 5 : 0);
     hud_row(5, &text_grid[0][4], game ? 8 : 0);
-    if (game)
-        while (n < 31 && text_grid[2][1 + n] == 0x06)
+    if (game) {
+        while (n < 31 && text_grid[1][1 + n] == 0x04)
             n++;
+        while (b < 7 && text_grid[2][1 + b] == 0x06)
+            b++;
+    }
 #ifdef HUD_TEST
     n = HUD_TEST;
 #endif
-    for (r = 0; r < 9; r++) {
-        u8 k = n > r * 8 ? n - r * 8 : 0;
-        if (k > 8)
-            k = 8;
-        hud_row(26 - r * 2, (const u8 *)"\x06\x06\x06\x06\x06\x06\x06\x06", k);
-        hud_row(27 - r * 2, (const u8 *)"\x07\x07\x07\x07\x07\x07\x07\x07", k);
+    for (r = 0; r < 18; r++)
+        hud_row(7 + r, ships, n > r * 8 ? (n - r * 8 > 8 ? 8 : n - r * 8) : 0);
+    for (i = 0; i < 8; i++) {
+        top[i] = i < b ? 0x06 : ' ';
+        bot[i] = i < b ? 0x07 : ' ';
     }
-    for (i = 0; i < 8; i++)
-        row[i] = game && i < 5 && text_grid[1][1 + i] == 0x04 ? 0x04 : ' ';
     if (OW(0x4a104))                    /* invincible (the title's up + START) */
-        row[7] = '*';
-    hud_row(7, row, 8);
+        top[7] = '*';
+    hud_row(26, top, 8);
+    hud_row(27, bot, 8);
 }
 
 /* called by the vsync hook at the start of VBlank */
