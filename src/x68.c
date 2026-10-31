@@ -231,6 +231,7 @@ u32 text_row_mask[32];          /* bit c = column c holds a character */
 u8 text_dirty;
 u8 text_spr_dirty;              /* a row shown by sprites (1..) changed since the last flush */
 u8 text_pl_dirty;               /* a row 1.. changed since plane A last showed the text */
+extern u8 tb_dirty;             /* (src/bg.c: plane B's text) */
 
 /* fn_2f06a(x, y, ch) */
 long x_text_putc(long x, long y, long ch)
@@ -246,7 +247,7 @@ long x_text_putc(long x, long y, long ch)
         *p = c;
         text_dirty = 1;
         if (y & 31)
-            text_spr_dirty = text_pl_dirty = 1;
+            text_spr_dirty = text_pl_dirty = tb_dirty = 1;
     }
     return 0;
 }
@@ -263,7 +264,7 @@ long x_text_clear(void)
         text_row_mask[i] = 0;
     }
     text_dirty = 1;
-    text_spr_dirty = text_pl_dirty = 1;
+    text_spr_dirty = text_pl_dirty = tb_dirty = 1;
     return 0;
 }
 
@@ -319,7 +320,7 @@ void text_map_set(u8 kind)
         for (r = 1; r < 28; r++)
             text_map[r] = r + 1;
     }
-    text_spr_dirty = text_pl_dirty = 1;
+    text_spr_dirty = text_pl_dirty = tb_dirty = 1;
 }
 
 /* fn_0132c(score, stage): the original's ranking and name entry */

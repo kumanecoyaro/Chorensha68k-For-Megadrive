@@ -28,8 +28,9 @@
 #endif
 #define PAIR_SLOTS    6             /* the first 16-tile slots: laser segment pairs (pair_tile) */
 #define CACHE_B_BASE  (1234 - CACHE_B_SLOTS * 16)
+#define CACHE_A_END   (CACHE_B_BASE - 8)    /* (the last 8 tiles: src/bg.c composite slots) */
 #define NSLOT (CACHE_A_MAX + CACHE_B_SLOTS)
-static u16 cache_a_base = BG_TILE_COUNT, cache_a_n = (CACHE_B_BASE - BG_TILE_COUNT) / 4;
+static u16 cache_a_base = BG_TILE_COUNT, cache_a_n = (CACHE_A_END - BG_TILE_COUNT) / 4;
 #define HASH_SIZE 512                   /* open addressing, key = block << 4 | palette */
 #define KEY_EMPTY 0xFFFF
 #define NO_ENTRY  0xFFFF
@@ -448,7 +449,7 @@ void xsp_cache_layout(u16 bg_end)
     if (bg_end < 1)
         bg_end = 1;
     cache_a_base = bg_end;
-    cache_a_n = (CACHE_B_BASE - bg_end) / 4;
+    cache_a_n = (CACHE_A_END - bg_end) / 4;
     if (cache_a_n > CACHE_A_MAX)
         cache_a_n = CACHE_A_MAX;
     clock_a = clock_b = 0;

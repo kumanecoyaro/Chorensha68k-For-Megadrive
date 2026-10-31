@@ -530,6 +530,15 @@ static u32 text_rows(void)
     return m;
 }
 
+/* nothing drawn into plane B since the screen was cleared (no BG: the
+ * ranking, the name entry) and plane A busy (a large enemy, effects): the text rows into plane B instead of
+ * sprites (src/bg.c tb_*: plane B then shows its own table, unscrolled) */
+extern u8 tb_dirty, bg_drawn;
+static u8 text_b_mode(void)
+{
+    return !bg_drawn && text_rows() ? 2 : 0;
+}
+
 static void write_text(void)
 {
     u8 r, c, pr, half;
@@ -562,7 +571,7 @@ static void write_text(void)
 u8 plane_text_refresh(void)
 {
     if (st_img != ST_TEXT && (shown >= 0 || was_fx || st_img >= 0))
-        return text_on_plane = 0;
+        return text_on_plane = text_b_mode();
     hs = vs = 0;
     split = 0;
     if (text_rows()) {
@@ -1722,7 +1731,7 @@ void plane_frame(void)
             text_on_plane = 1;
             return;
         }
-        text_on_plane = 0;
+        text_on_plane = text_b_mode();
         if (fm_on && img >= 0) {
 #ifdef TEST_LINES
             {
@@ -1842,7 +1851,7 @@ void plane_frame(void)
     ay2 = -999;
     st_img = -2;                        /* (the static image is rewritten afterwards) */
     st_img2 = -1;
-    text_on_plane = 0;
+    text_on_plane = text_b_mode();
     held_n = 0;
 
     /* the visible rows */
@@ -1969,6 +1978,7 @@ void plane_upload(void)
 
 /* the new frame's plane A scrolls, split and bands for plane_vblank (first in
  * the VBlank, src/main.c; the rows written by plane_upload after it) */
+u8 act_tb;                              /* (src/bg.c: plane B shows the text) */
 void plane_act(void)
 {
     u8 i;
@@ -1976,6 +1986,9 @@ void plane_act(void)
     act_hs2 = hs2; act_vs2 = vs2; act_split = split;
     act_colmode = colmode; act_vsr = vsr; act_colk = colk;
     act_fm_on = fm_on;
+    if (text_on_plane == 2 && !act_tb)
+        tb_dirty = 1;                   /* (src/bg.c tb_vblank: the whole text again) */
+    act_tb = text_on_plane == 2;
     if (fm_on) {
         for (i = 0; i < fm_nev; i++)
             act_fm_ev[i] = fm_ev[i];
@@ -2000,19 +2013,19 @@ void plane_vblank(void)
         VDP_CTRL32 = VSRAM_W(0);
         for (k = 0; k < 16; k++) {
             VDP_DATA = (k < act_colk ? act_vs : act_vsr) & 511;
-            VDP_DATA = bg_vs & 511;
+            VDP_DATA = act_tb ? 0 : bg_vs & 511;
         }
     } else {
         vdp_set_reg(11, 0x00);
         VDP_CTRL32 = VSRAM_W(0);
         VDP_DATA = act_vs & 511;
         if (!bg_on)                     /* (plane B shows plane A's table: on top of it) */
-            VDP_DATA = act_vs & 511;
+            VDP_DATA = act_tb ? 0 : act_vs & 511;
     }
     VDP_CTRL32 = VRAM_W(VRAM_HSCROLL);
     VDP_DATA = act_hs;
     if (!bg_on)
-        VDP_DATA = act_hs;
+        VDP_DATA = act_tb ? 0 : act_hs;
     split_vs = act_vs2 & 511;
     split_hs = act_hs2;
     split_line = act_split;

@@ -25,15 +25,29 @@
 #include "game.h"
 #include "vdp.h"
 #include "orig.h"
+#include "spr.h"
 
 long ocall(void *fn, long a1, long a2, long a3, long a4);
 
-/* composite slots live in VRAM the H40 layout leaves unused (the 4 KB
- * after plane B, $F000-$FFFF: 128 tiles; peak use in stage 1: 78) */
+/* composite slots live in VRAM tiles the H40 layout leaves unused (peak
+ * use in stage 1: 78): the window table outside the panel cells, the hscroll
+ * table and the panel glyphs (src/vdp.h, src/main.c) 77, after the sprite
+ * table ($BE80..) 12, the end of the 4-tile sprite cache (src/xsp.c
+ * CACHE_A_END) 7.  ($F000.. is the text font.) */
 #define COMP_SLOTS 96
+static const u16 slot_tab[COMP_SLOTS] = {
+    1664, 1668, 1672, 1676, 1680, 1684, 1688, 1692, 1700, 1704, 1708, 1709,
+    1711, 1712, 1713, 1715, 1716, 1717, 1719, 1720, 1721, 1723, 1724, 1725,
+    1727, 1728, 1729, 1731, 1732, 1733, 1735, 1736, 1737, 1739, 1740, 1741,
+    1743, 1744, 1745, 1747, 1748, 1749, 1751, 1752, 1753, 1755, 1756, 1757,
+    1759, 1760, 1761, 1763, 1764, 1765, 1767, 1768, 1769, 1771, 1772, 1773,
+    1775, 1776, 1777, 1778, 1779, 1780, 1781, 1782, 1783, 1784, 1785, 1786,
+    1787, 1788, 1789, 1790, 1791, 1524, 1525, 1526, 1527, 1528, 1529, 1530,
+    1531, 1532, 1533, 1534, 1535, 586, 587, 588, 589, 590, 591, 592
+};
 static u16 slot_tile(u8 s)
 {
-    return 0xF000 / 32 + s;
+    return slot_tab[s];
 }
 #define CHIPQ 32
 #define UPQ   64
@@ -262,11 +276,17 @@ static void merge_cell(u8 p, u8 c)
 u8 bglog[4][2][32];                         /* chips drawn per stage & 3, layer */
 #endif
 /* fn_301f6(pcg, chip_ptr, layer, x, y): chip_ptr = B_8824a + set * $2000 + chip * 32 */
+static void tb_clear(void);
+extern u8 bg_drawn;
+static u32 tb_rows;
 long x_bg_chip(long pcg, long chip_ptr, long layer, long x, long y)
 {
     u8 chip = (u8)((chip_ptr - OADDR(0x8824a)) >> 5);
     u8 p = ((u16)y >> 5) & 15, c = ((u16)x >> 5) & 7;
     (void)pcg;
+    bg_drawn = 1;
+    if (tb_rows)
+        tb_clear();
 #ifdef TEST_BGLOG
     {
         u8 st = OW(0x4a0ee) & 7;
@@ -325,6 +345,9 @@ static void set_select(u8 st)
 static void merge_all(void)
 {
     u8 p, c;
+    bg_drawn = 1;
+    if (tb_rows)
+        tb_clear();
     far_d = 0;
     last_p = 0xFF;
     for (p = 0; p < 16; p++) {
@@ -402,6 +425,65 @@ void bg_stage_check(void)
  * plane A's name table instead, scrolled as plane A (plane_upload): only
  * plane A's content (text, nothing else then) shows. */
 volatile u8 bg_on;                          /* (plane.c: plane B follows plane A while off) */
+
+/* the text in plane B (src/plane.c text_b_mode: nothing drawn into plane B
+ * since the screen was cleared (the ranking, the name entry), plane A
+ * busy): rows 0..27 of its table, written in the VBlank (tb_vblank) when the
+ * text changed (tb_dirty), cleared before anything is drawn into plane B
+ * (bg_drawn: no text there any more until the next x_screen_clear) */
+u8 tb_dirty, bg_drawn;                      /* (tb_rows: the plane B rows holding text) */
+extern u8 act_tb;
+static void tb_clear(void)                  /* (main program: IRQs off for each piece) */
+{
+    u8 r;
+    for (r = 0; r < 32 && tb_rows; r++, tb_rows >>= 1)
+        if (tb_rows & 1) {
+            irq_off();
+            vdp_fill(VRAM_PLANE_B + r * 64, 0, 32);
+            irq_on();
+        }
+    tb_rows = 0;
+}
+
+u8 text_row0(void);
+extern u8 text_map[28];
+void tb_vblank(void)
+{
+    u8 r, c, r0;
+    u32 now = 0;
+    if (bg_drawn)
+        return;
+    if (!act_tb) {                          /* (plane A shows the text again: plane B's away) */
+        for (r = 0; tb_rows; r++, tb_rows >>= 1)
+            if (tb_rows & 1) {
+                VDP_CTRL32 = VRAM_W(VRAM_PLANE_B + r * 64);
+                for (c = 0; c < 32; c++)
+                    VDP_DATA = 0;
+            }
+        tb_dirty = 1;
+        return;
+    }
+    if (!tb_dirty)
+        return;
+    tb_dirty = 0;
+    r0 = text_row0();
+    for (r = r0; r < 28; r++)
+        if (text_row_mask[text_map[r]])
+            now |= 1UL << r;
+    for (r = 0; r < 28; r++)
+        if ((now | tb_rows) >> r & 1) {
+            const u8 *t = text_grid[text_map[r]];
+            VDP_CTRL32 = VRAM_W(VRAM_PLANE_B + r * 64);
+            if (now >> r & 1)
+                for (c = 0; c < 32; c++, t++)
+                    VDP_DATA = *t ? 0x8000 | (TEXT_PAL << 13) | (FONT_TILE_BASE + (*t & 0x7F)) : 0;
+            else
+                for (c = 0; c < 32; c++)
+                    VDP_DATA = 0;
+        }
+    tb_rows = now;
+}
+
 void bg_show(u8 on)
 {
     bg_on = on;
@@ -410,6 +492,8 @@ void bg_show(u8 on)
 /* x_screen_clear: drop the queued writes (the planes are being cleared) */
 void bg_reset(void)
 {
+    bg_drawn = 0;
+    tb_rows = 0;                            /* (plane B is being cleared) */
     irq_off();
     chipq_n = 0;
     upq_n = 0;
@@ -468,7 +552,14 @@ void bg_scroll(s16 x0, s16 x1, s16 y0, s16 y1)
 s16 bg_vs;
 void bg_upload(void)
 {
-    VDP_CTRL = 0x8400 | (bg_on ? VRAM_PLANE_B >> 13 : VRAM_PLANE_A >> 13);
+    VDP_CTRL = 0x8400 | (bg_on || act_tb ? VRAM_PLANE_B >> 13 : VRAM_PLANE_A >> 13);
+    if (act_tb) {                           /* (the text: unscrolled) */
+        VDP_CTRL32 = VSRAM_W(2);
+        VDP_DATA = 0;
+        VDP_CTRL32 = VRAM_W(VRAM_HSCROLL + 2);
+        VDP_DATA = 0;
+        return;
+    }
     VDP_CTRL32 = VSRAM_W(2);                /* plane B */
     VDP_DATA = scroll_y[0] & 511;
     bg_vs = scroll_y[0];                    /* (src/plane.c: the column scroll writes every column) */

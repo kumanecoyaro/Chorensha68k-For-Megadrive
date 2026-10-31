@@ -15,6 +15,7 @@ void plane_upload(void);
 void plane_act(void);
 void sound_dma(u8 on);
 void bg_chips(void);
+void tb_vblank(void);
 
 u16 frame_count;
 /* the score panel (window plane, screen cells 32..39 on the right, H40):
@@ -22,10 +23,10 @@ u16 frame_count;
  * in 8 columns, in opaque glyphs (the panel covers the sprites running off
  * the play area: they are low priority) put in the unused part of the window
  * table (src/vdp.h) */
-static const char hud_chars[] = " 0123456789SCOREHIBMP*\x04\x06\x07";
+static const char hud_chars[] = " 0123456789SCOREHI*\x04\x06\x07";
 #define HUD_ATTR (0x8000 | (TEXT_PAL << 13))
 
-static u16 hud_tile(u8 i)               /* glyph i: +$20 / +$60 of window row i / 2 */
+static u16 hud_tile(u8 i)               /* glyph i (< 22): +$20 / +$60 of window row i / 2 */
 {
     return (VRAM_WINDOW + (i >> 1) * 128 + ((i & 1) ? 0x60 : 0x20)) / 32;
 }
@@ -146,6 +147,7 @@ void vblank_work(void)
     } else
         xsp_lag();
     plane_vblank();                     /* plane A scroll, the H-int for the frame shown */
+    tb_vblank();                        /* (the text in plane B: the screen off, plane A busy) */
     bg_chips();
     if (frame_ready) {
         sound_dma(1);
