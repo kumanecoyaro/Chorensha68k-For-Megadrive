@@ -74,20 +74,34 @@ u8 text_row0(void)
     return text_grid[0][1] == 'S' && text_grid[0][2] == 'C' ? 4 : 0;
 }
 
+/* HI SCORE / SCORE on top, the ships below (2 rows each, 8 to a row pair:
+ * the game gives 10 and more), the bombs (5 at most) in the bottom row */
 static void hud_build(void)
 {
-    static const u8 score[] = "SCORE", hi[] = "HI", bomb[] = "BOMB", ship[] = "SHIP";
-    u8 game = text_row0() != 0;
-    hud_row(1, score, game ? 5 : 0);
-    hud_row(2, &text_grid[0][4], game ? 8 : 0);
-    hud_row(4, hi, game ? 2 : 0);
-    hud_row(5, &text_grid[0][23], game ? 8 : 0);
-    hud_row(7, bomb, game ? 4 : 0);
-    hud_row(8, &text_grid[1][1], game ? 8 : 0);
-    hud_row(10, ship, game ? 4 : 0);
-    hud_row(11, &text_grid[2][1], game ? 8 : 0);
-    hud_row(12, &text_grid[3][1], game ? 8 : 0);
-    hud_row(26, (const u8 *)"*", OW(0x4a104) ? 1 : 0);  /* invincible (the title's up + START) */
+    static const u8 score[] = "SCORE", hi[] = "HI SCORE";
+    u8 game = text_row0() != 0, n = 0, r, row[8], i;
+    hud_row(1, hi, game ? 8 : 0);
+    hud_row(2, &text_grid[0][23], game ? 8 : 0);
+    hud_row(4, score, game ? 5 : 0);
+    hud_row(5, &text_grid[0][4], game ? 8 : 0);
+    if (game)
+        while (n < 31 && text_grid[2][1 + n] == 0x06)
+            n++;
+#ifdef HUD_TEST
+    n = HUD_TEST;
+#endif
+    for (r = 0; r < 9; r++) {
+        u8 k = n > r * 8 ? n - r * 8 : 0;
+        if (k > 8)
+            k = 8;
+        hud_row(7 + r * 2, (const u8 *)"\x06\x06\x06\x06\x06\x06\x06\x06", k);
+        hud_row(8 + r * 2, (const u8 *)"\x07\x07\x07\x07\x07\x07\x07\x07", k);
+    }
+    for (i = 0; i < 8; i++)
+        row[i] = game && i < 5 && text_grid[1][1 + i] == 0x04 ? 0x04 : ' ';
+    if (OW(0x4a104))                    /* invincible (the title's up + START) */
+        row[7] = '*';
+    hud_row(26, row, 8);
 }
 
 /* called by the vsync hook at the start of VBlank */
