@@ -12,6 +12,7 @@ void text_map_set(u8 kind);
 long x_bg_load(void);
 long x_text_clear(void);
 void plane_upload(void);
+void plane_act(void);
 void sound_dma(u8 on);
 void bg_chips(void);
 
@@ -53,7 +54,10 @@ void vblank_work(void)
     if (vbl_busy)
         return;
     vbl_busy = 1;
-    bg_chips();
+    /* first the scrolls and the H-int of the frame shown (while still in the
+     * VBlank: the H-int counter takes register 10 only there; set later, after
+     * the DMA ran into the display, the first H-int came anywhere and the
+     * band switches of src/plane.c went late), then the DMA */
     if (frame_ready) {
         sound_dma(1);
         xsp_upload();
@@ -61,6 +65,14 @@ void vblank_work(void)
         VDP_CTRL32 = VRAM_W(VRAM_SPRITES);
         VDP_DATA = 0; VDP_DATA = 0; VDP_DATA = 0; VDP_DATA = 0;
 #endif
+        sound_dma(0);
+        plane_act();
+    } else
+        xsp_lag();
+    plane_vblank();                     /* plane A scroll, the H-int for the frame shown */
+    bg_chips();
+    if (frame_ready) {
+        sound_dma(1);
         bg_upload();
         plane_upload();
         sound_dma(0);
@@ -70,12 +82,11 @@ void vblank_work(void)
             text_dirty = 0;
         }
         frame_ready = 0;
-    } else
-        xsp_lag();
-    plane_vblank();                     /* plane A scroll, the H-int for the frame shown */
+    }
     /* the VDP work is done: the H-int may come in during the rest (the
-     * sound, which can run into the display) */
-    __asm__ volatile("move.w #0x2500, %sr");
+     * sound, which can run into the display: level 4 let in, else the band
+     * switches of src/plane.c came late and the rows below shook) */
+    __asm__ volatile("move.w #0x2300, %sr");
     input_poll();
 #ifdef FRAME_PROBE
     vp[1] = stamp();

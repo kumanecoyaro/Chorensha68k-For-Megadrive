@@ -72,7 +72,7 @@ static u16 tbase = ENEMY_BASE;          /* VRAM tile of the loaded group's first
 #define FM_MAX     16                   /* units looked at (src/plane.c fm_select) */
 #define FM_PL      10                   /* units placed */
 #define FM_BANDS   4                    /* rows of them (each its own horizontal scroll) */
-#define FM_EV      24                   /* VSRAM changes a frame (src/xsp_fast.s _hint) */
+#define FM_EV      4                    /* band switches a frame (src/xsp_fast.s _hint) */
 #define REF_O20F   0xB4E                /* stage 6 obj20F: pods $B4E, $B4F, centre $B50 */
 #define IMG_O20F   75                   /* the whole of it (palette 8) */
 #define IMG_O21F9  63                   /* obj21f in palette 9 (stage 6; images 3 / 4: palette 7) */
@@ -173,11 +173,34 @@ typedef struct { u8 line, cols; u16 v; } FmEv;
 FmEv fm_ev[FM_EV], act_fm_ev[FM_EV + 1];   /* (act_fm_ev: then a line 0xFF, src/xsp_fast.s _hint) */
 u8 fm_nev, act_fm_nev, act_fm_on, fm_evi;
 extern u8 hint_nx;
-extern u16 hint_r1;
+extern u16 hint_r1, hint_exp;
 static u8 fm_on;
 static u8 fm_n, fm_ix[FM_MAX];          /* the frame's units: call indices (B15 / B16 calls) */
 static u8 fm_band[FM_MAX];              /* (fm_select: the row a unit is in) */
 static u8 fm_seen, fm_col;              /* (fm_col: a column of them, fm_write) */
+/* fm_write's last layout, kept while each band's units are as they were but
+ * for the band moving: a signature of each band (its units' places from its
+ * first, images, columns on screen), the units giving its scroll (x: its 64 px
+ * block, y), its first row in the window, its event (0xFF: the top one, 0xFE:
+ * none), the units placed */
+static u32 fm_bsig[FM_BANDS];
+static u8 fm_bax[FM_BANDS], fm_bay[FM_BANDS], fm_bR0[FM_BANDS], fm_bev[FM_BANDS];
+static s8 fm_bblk[FM_BANDS];
+static s16 fm_by0[FM_BANDS];
+static u16 fm_placed;
+static u8 fm_sn = 0xFF, fm_scol;
+/* the units as they were (as many in the list, each a few px from where it
+ * was, the same image, its columns on screen the same): fm_select / fm_write
+ * skipped, the scrolls from the units giving them only (fm_skip; the units by
+ * their places in the list: fm_raw of each one placed, fm_brx / fm_bry the
+ * bands' scroll units, fm_praw those placed) */
+static u8 fm_raw[FM_MAX], fm_rawn, fm_skip;
+static u8 fm_brx[FM_BANDS], fm_bry[FM_BANDS];
+static u16 fm_praw;
+static u8 fm_rband[FM_MAX], fm_bRe[FM_BANDS], fm_bf[FM_BANDS];  /* (a unit's band; a band's */
+                                            /* last row, horizontal scroll) */
+static s16 fm_lx[FM_MAX], fm_ly[FM_MAX];    /* (each unit in the list last frame: its place, */
+static s8 fm_limg[FM_MAX];                  /* its image) */
 static s8 fm_img[FM_MAX];
 typedef struct { u32 k; u16 c; } FmRect;  /* a unit written: img, r0, nr, row, base; columns lo << 8 | hi */
 static FmRect fm_old[FM_PL];           /* (the units in the window: only those that change rewritten) */
@@ -846,6 +869,40 @@ static void fm_select(void)
     s16 x[FM_MAX], cv[8], rv[8], rx[8];
     u8 ci[FM_MAX], ri[FM_MAX], cn[8], rn[8], rok[8], rb[8];
     u8 k, j, n = fm_n, m = 0, nc = 0, nr = 0, col = 0xFF;
+    fm_skip = 0;
+#ifndef NO_FMSKIP
+    if (st_img == IMG_FM && n == fm_rawn && fm_seen >= 8) {
+        for (k = 0; k < n; k++) {       /* (each one placed the same unit: as moving, the */
+                                        /* same image; columns at a screen edge: fm_write) */
+            const Call *c = &calls[fm_ix[k]];
+            s16 dx = (c->x >> 6) - fm_lx[k], dy = (c->y >> 6) - fm_ly[k];
+            const PlaneImg *im = &plane_img[fm_img[k]];
+            s16 xa = (c->x >> 6) + im->ox, xb = xa + im->w * 8;
+            u8 held = fm_praw >> k & 1;     /* (placed, or giving a band's scroll) */
+            for (j = 0; !held && j < FM_BANDS; j++)
+                held = fm_bev[j] != 0xFE && (fm_brx[j] == k || fm_bry[j] == k);
+            if (held && (fm_img[k] != fm_limg[k] || (u16)(dx + 4) > 8
+                                       || (u16)(dy + 4) > 8 || (dx && dy)))
+                break;
+            if ((xb >= 8 && xa <= 248) != (xb - dx >= 8 && xa - dx <= 248))
+                break;                  /* (a column all on screen or none: as it was) */
+        }
+        for (j = 0; k == n && j < FM_BANDS; j++)
+            if (fm_bev[j] != 0xFE
+                && ((calls[fm_ix[fm_brx[j]]].x >> 6) + plane_img[fm_img[fm_brx[j]]].ox) >> 6 != fm_bblk[j])
+                k = 0;
+        if (k == n) {
+            for (k = 0; k < n; k++) {
+                fm_lx[k] = calls[fm_ix[k]].x >> 6; fm_ly[k] = calls[fm_ix[k]].y >> 6;
+            }
+            fm_skip = 1;
+            return;
+        }
+    }
+#endif
+    for (k = 0; k < n; k++) {
+        fm_lx[k] = calls[fm_ix[k]].x >> 6; fm_ly[k] = calls[fm_ix[k]].y >> 6; fm_limg[k] = fm_img[k];
+    }
     for (k = 0; k < n; k++) {           /* (the columns by x, the rows by y: 20 px for one) */
         const Call *cl = &calls[fm_ix[k]];
         s16 a = cl->x >> 6, b = cl->y >> 6;
@@ -877,7 +934,7 @@ static void fm_select(void)
     if (fm_col) {
         for (k = 0; k < n; k++)
             if (ci[k] == col) {
-                fm_ix[m] = fm_ix[k]; fm_img[m] = fm_img[k]; fm_band[m] = 0;
+                fm_ix[m] = fm_ix[k]; fm_img[m] = fm_img[k]; fm_band[m] = 0; fm_raw[m] = k;
                 m++;
             }
     } else {                            /* rows (level, x68.c x_pal_upload) of 3 at the least, */
@@ -893,11 +950,16 @@ static void fm_select(void)
         for (k = 0; k < n; k++) {
             u8 q = ri[k] < nr ? rb[ri[k]] : 0xFF;
             if (q != 0xFF) {
-                fm_ix[m] = fm_ix[k]; fm_img[m] = fm_img[k]; fm_band[m] = q;
+                fm_ix[m] = fm_ix[k]; fm_img[m] = fm_img[k]; fm_band[m] = q; fm_raw[m] = k;
                 m++;
             }
         }
     }
+    fm_rawn = n;
+    for (k = 0; k < n; k++)
+        fm_rband[k] = 0xFF;
+    for (k = 0; k < m; k++)
+        fm_rband[fm_raw[k]] = fm_band[k];
     if (!m)
         fm_seen = 0;
     else if (fm_seen < 8)
@@ -916,31 +978,178 @@ static void fm_write(void)
     u16 n = fm_n, k, j, nn = 0, R = 0;
     s16 lo = -0x7FFF;                   /* (the bottom of the bands above; none) */
     u32 rows = 0, ch = 0;               /* (the rows of the units now, the rows changed) */
+    u32 sig[FM_BANDS];
+    s16 fx[FM_BANDS], fy[FM_BANDS];
+    if (fm_skip) {                      /* (fm_select: the scrolls only) */
+        for (k = 0; k < FM_BANDS; k++) {
+            const Call *a, *b;
+            s16 f, v;
+            if (fm_bev[k] == 0xFE)
+                continue;
+            a = &calls[fm_ix[fm_brx[k]]]; b = &calls[fm_ix[fm_bry[k]]];
+            f = ((a->x >> 6) + plane_img[fm_img[fm_brx[k]]].ox) & 63;
+            v = fm_bR0[k] * 8 - ((b->y >> 6) + plane_img[fm_img[fm_bry[k]]].oy);
+            if (fm_bev[k] == 0xFF) {
+                hs = f; vs = v;
+            } else {
+                fm_ev[fm_bev[k]].cols = f; fm_ev[fm_bev[k]].v = (u16)v & 511;
+            }
+            {   /* the window column at the screen edges (in part at both: blank) another:
+                 * the one there before now all on screen (the units' cells there), the
+                 * new one blank */
+                u8 so = fm_bf[k] & 7 ? ((256 - fm_bf[k]) >> 3) & 31 : 0xFF;
+                u8 sn = f & 7 ? ((256 - f) >> 3) & 31 : 0xFF, r;
+                if (so == sn)
+                    goto same;
+                s16 y0 = (b->y >> 6) + plane_img[fm_img[fm_bry[k]]].oy;
+                if (sn != 0xFF) {
+                    u8 i;
+                    for (r = fm_bR0[k]; r < fm_bRe[k]; r++)
+                        win[r][sn] = 0;
+                    for (i = 0; i < fm_nold; i++) {     /* (the units' columns written: */
+                        FmRect *q = &fm_old[i];         /* one fewer) */
+                        u8 pr = (q->k >> 8) & 31, lo = q->c >> 8, hi = (u8)q->c;
+                        u8 ci = (sn - (s8)q->k) & 31;
+                        if (pr < fm_bR0[k] || pr >= fm_bRe[k] || ci < lo || ci > hi)
+                            continue;
+                        if (ci == lo)
+                            lo++;
+                        else
+                            hi = ci - 1;
+                        q->c = lo << 8 | hi;
+                    }
+                }
+                if (so != 0xFF && so != sn) {
+                    s16 cx = ((so * 8 + f) & 255);  /* (its place on screen) */
+                    u8 j;
+                    for (j = 0; j < fm_rawn; j++) {
+                        const Call *c = &calls[fm_ix[j]];
+                        const PlaneImg *im = &plane_img[fm_img[j]];
+                        s16 xa = (c->x >> 6) + im->ox, hp, col, ya;
+                        const u16 *m;
+                        u16 attr;
+                        if (!(fm_praw >> j & 1) || fm_rband[j] != k)
+                            continue;
+                        hp = ((xa - f + 4) >> 3) * 8 + f;   /* (as placed: fm_write) */
+                        col = (cx - hp) >> 3;
+                        if (cx < hp || col >= im->w)
+                            continue;
+                        ya = (c->y >> 6) + im->oy;
+                        attr = (((u16)im->pal << 13) | img_prio(fm_img[j])) + tbase - 1;
+#ifdef FM_DEBUG
+                        attr &= 0x1FFF;
+#endif
+                        m = plane_map + im->map + col;
+                        for (r = 0; r < im->h; r++, m += im->w)
+                            win[fm_bR0[k] + ((ya - y0) >> 3) + r][so] = *m ? attr + *m : 0;
+                        {                       /* (its columns written: one more) */
+                            u32 key = (u32)(u8)fm_img[j] << 24 | (u32)im->h << 13
+                                      | (u32)(fm_bR0[k] + ((ya - y0) >> 3)) << 8 | (u8)((hp - f) >> 3);
+                            u8 i;
+                            for (i = 0; i < fm_nold; i++)
+                                if (fm_old[i].k == key) {
+                                    u8 lo = fm_old[i].c >> 8, hi = (u8)fm_old[i].c;
+                                    if (col < lo) lo = col;
+                                    if (col > hi) hi = col;
+                                    fm_old[i].c = lo << 8 | hi;
+                                }
+                        }
+                    }
+                }
+                ch |= ROWS_MASK(fm_bRe[k] - fm_bR0[k]) << fm_bR0[k];
+            }
+          same:
+            fm_bf[k] = f;
+        }
+        wr_n = 0;
+        {
+            u32 v = ch;
+            u16 pp;
+            for (pp = 0; v; v >>= 1, pp++)
+                if (v & 1) {
+                    wr_row[wr_n] = pp;
+                    wr_win[wr_n] = win_nz >> pp & 1 ? pp : 0xFF;
+                    wr_n++;
+                }
+        }
+        for (k = 0; k < fm_rawn; k++)
+            if (fm_praw >> k & 1) {
+                Call *cl = &calls[fm_ix[k]];
+                if (pal_of(cl) == 6) {
+                    cl->id = EMPTY_REF;
+                    if (fm_img[k] != IMG_FM) {
+                        cl[-1].id = EMPTY_REF; cl[-2].id = EMPTY_REF;
+                    }
+                }
+            }
+        return;
+    }
     for (k = 0; k < FM_BANDS; k++) {
-        tb[k] = 224; bb[k] = 0; bn[k] = 0;
+        tb[k] = 224; bb[k] = 0; bn[k] = 0; sig[k] = 0; fx[k] = 0x7FFF;
     }
     for (k = 0; k < n; k++) {           /* (by x: insertion; each band's top, extent on screen) */
         FmU *p = &u[k];
         const Call *cl = &calls[fm_ix[k]];
         s16 t, e;
         u8 q = fm_band[k];
+        u32 v;
         p->img = fm_img[k]; p->im = &plane_img[p->img]; p->ix = k | 0x80; p->band = q;
         p->x = (cl->x >> 6) + p->im->ox; p->y = (cl->y >> 6) + p->im->oy;
         for (j = k; j > 0 && ord[j - 1]->x > p->x; j--)
             ord[j] = ord[j - 1];
         ord[j] = p;
+        if (fx[q] == 0x7FFF) {
+            fx[q] = p->x; fy[q] = p->y;
+        }
+        v = (u32)(u16)(p->x - fx[q]) << 16 | (u16)(p->y - fy[q]);
+        sig[q] = (sig[q] << 4 | sig[q] >> 28) ^ v ^ (u8)p->img ^ (u32)k << 8;
         t = p->y; e = t + p->im->h * 8;
         if (e <= 0 || t >= 224 || p->x + p->im->w * 8 <= 0 || p->x >= 256)
             continue;
+        {                               /* (its columns on screen) */
+            s16 l = (7 - p->x) >> 3, h = (248 - p->x) >> 3;
+            if (l < 0) l = 0;
+            if (h > p->im->w - 1) h = p->im->w - 1;
+            sig[q] ^= (u32)(l | h << 6 | 0x1000) << 12;
+        }
         if (t < 0) t = 0;
         if (e > 224) e = 224;
         if (t < tb[q]) tb[q] = t;
         if (e > bb[q]) bb[q] = e;
     }
+    if (st_img == IMG_FM && n == fm_sn && fm_col == fm_scol) {
+        for (k = 0; k < FM_BANDS; k++) {    /* as it was: the scrolls only */
+            if (sig[k] != fm_bsig[k])
+                break;
+            if (fm_bev[k] != 0xFE && ((u[fm_bax[k]].x >> 6) != fm_bblk[k]
+                                      || (fm_nev && u[fm_bay[k]].y != fm_by0[k])))
+                break;
+        }
+        if (k == FM_BANDS) {
+            for (k = 0; k < FM_BANDS; k++) {
+                s16 f = u[fm_bax[k]].x & 63, v = fm_bR0[k] * 8 - u[fm_bay[k]].y;
+                fm_bf[k] = f;
+                if (fm_bev[k] == 0xFF) {
+                    hs = f; vs = v;
+                } else if (fm_bev[k] != 0xFE) {
+                    fm_ev[fm_bev[k]].cols = f; fm_ev[fm_bev[k]].v = (u16)v & 511;
+                }
+            }
+            wr_n = 0;
+            for (k = 0; k < n; k++)
+                if (fm_placed >> k & 1)
+                    u[k].ix &= 0x7F;
+            goto drop;
+        }
+    }
     for (k = 0; k < n; k++) {           /* (each band's units, from the left) */
         u8 q = ord[k]->band;
         bu[q][bn[q]++] = ord[k];
     }
+    for (k = 0; k < FM_BANDS; k++) {
+        fm_bsig[k] = sig[k]; fm_bev[k] = 0xFE;
+    }
+    fm_sn = n; fm_scol = fm_col;
     for (k = 0; k < FM_BANDS; k++) {    /* the bands (fm_select: by their tops), each in its */
         u8 q = 0xFF;                    /* window rows, its scroll from the H-int */
         u32 used = 0;                   /* (the window's columns taken in the band) */
@@ -955,8 +1164,11 @@ static void fm_write(void)
         bb[q] = 0;                      /* (done) */
         for (j = 0; j < bn[q]; j++) {   /* (its units below those above: its top) */
             FmU *p = bu[q][j];
-            if (p->y + p->im->h * 8 > 0 && p->y < 224 && p->y >= lo && p->y < y0)
+            if (p->y + p->im->h * 8 > 0 && p->y < 224 && p->y >= lo && p->y < y0) {
                 y0 = p->y;
+                fm_bay[q] = p->ix & 0x7F;
+                fm_bry[q] = fm_raw[p->ix & 0x7F];
+            }
         }
         if (y0 == 0x7FFF || (lo >= 0 && nev == FM_EV))
             continue;
@@ -980,8 +1192,12 @@ static void fm_write(void)
             r = R0 + (dy >> 3);
             if (r + im->h > 32)
                 continue;
-            if (!any)                   /* (the band's horizontal scroll: all 64 px apart, */
+            if (!any) {                 /* (the band's horizontal scroll: all 64 px apart, */
                 f = p->x & 63;          /* their places in the window kept while it moves) */
+                fm_bax[q] = p->ix & 0x7F;
+                fm_bblk[q] = p->x >> 6;
+                fm_brx[q] = fm_raw[p->ix & 0x7F];
+            }
             p->base = (p->x - f + 4) >> 3;
             hp = p->base * 8 + f;
             {
@@ -1015,9 +1231,12 @@ static void fm_write(void)
         }
         if (!any)
             continue;
+        fm_bR0[q] = R0; fm_by0[q] = y0; fm_bRe[q] = R - 2; fm_bf[q] = f;
         if (lo < 0) {                   /* (the first: from the top) */
             hs = f; vs = R0 * 8 - y0;
+            fm_bev[q] = 0xFF;
         } else {
+            fm_bev[q] = nev;
             fm_ev[nev].line = L;
             fm_ev[nev].cols = f; fm_ev[nev].v = (u16)(R0 * 8 - y0) & 511;
             nev++;
@@ -1083,6 +1302,19 @@ static void fm_write(void)
         attr &= 0x1FFF;                 /* (debug: in the BG palette, to tell them) */
 #endif
         lo = cur[j].c >> 8; cnt = (u8)cur[j].c - lo; w = im->w;
+        for (k = 0; k < fm_nold; k++)   /* (the same in the same place, its columns on screen */
+            if (fm_old[k].k == cur[j].k) {  /* changed at a screen edge: the new ones only) */
+                u16 ol = fm_old[k].c >> 8, oh = (u8)fm_old[k].c;
+                if (ol <= lo && oh >= lo + cnt)
+                    cnt = 0xFFFF;       /* (fewer: the old one's clearing left these) */
+                else if (ol <= lo && oh >= lo && oh < lo + cnt) {
+                    cnt -= oh + 1 - lo; lo = oh + 1;
+                } else if (oh >= lo + cnt && ol > lo && ol <= lo + cnt)
+                    cnt = ol - 1 - lo;
+                break;
+            }
+        if (cnt == 0xFFFF)
+            continue;
         m = plane_map + im->map + p->r0 * w + lo;
         for (r = 0; r < p->nr; r++, m += w) {
             u16 *d = win[p->pr + r];
@@ -1120,6 +1352,13 @@ static void fm_write(void)
     vram_nz[0] = rows;
     vram_nz[1] = 0;
     st_img = IMG_FM; st_img2 = -1; st_cols = 0;
+    fm_placed = 0; fm_praw = 0;
+    for (k = 0; k < n; k++)
+        if (!(u[k].ix & 0x80)) {
+            fm_placed |= 1 << k;
+            fm_praw |= 1 << fm_raw[k];
+        }
+drop:
     for (k = 0; k < n; k++) {           /* (a hit flash stays a sprite, over it) */
         Call *cl;
         if (u[k].ix & 0x80)
@@ -1680,6 +1919,13 @@ void plane_upload(void)
     for (i = 0; i < wr_n; i++)
         vdp_dma_vram(VRAM_PLANE_A + wr_row[i] * 64, wr_win[i] == 0xFF ? (const void *)zero_row : win[wr_win[i]], 32);
     wr_n = 0;
+}
+
+/* the new frame's plane A scrolls, split and bands for plane_vblank (first in
+ * the VBlank, src/main.c; the rows written by plane_upload after it) */
+void plane_act(void)
+{
+    u8 i;
     act_hs = hs; act_vs = vs;
     act_hs2 = hs2; act_vs2 = vs2; act_split = split;
     act_colmode = colmode; act_vsr = vsr; act_colk = colk;
@@ -1743,6 +1989,7 @@ void plane_vblank(void)
             hint_r1 = 1;
         if (hint_r1 > 248)
             hint_r1 = 248;
+        hint_exp = hint_r1;
         vdp_set_reg(10, hint_r1 - 1);
         vdp_set_reg(0, t0 < 0x100 ? 0x14 : 0x04);
     }

@@ -1518,8 +1518,18 @@ _hint:
 | at the most 248 lines on)
 30: move.w  #0x100, %d1
     move.w  #0x100, %d2
+    move.w  hint_exp, %d3               | the line this H-int came at: as planned (one
+    cmp.w   %d0, %d3                    | held off, late: the reload was at that line;
+    bls.s   31f                         | several: the last of them), else this one
     move.w  %d0, %d3
-    add.w   hint_r1, %d3                | (the next H-int's line)
+31: move.w  %d3, %d4
+    add.w   hint_r1, %d4
+    cmp.w   %d0, %d4
+    bhi.s   32f
+    move.w  %d4, %d3
+    bra.s   31b
+32: add.w   hint_r1, %d3                | (the next H-int's line)
+    move.w  %d3, hint_exp
     move.w  split_line, %d4
     beq.s   1f
     move.w  %d4, %d1
@@ -1624,10 +1634,11 @@ dbl_slot:    .space DBL_MAX
     .globl  act_n, hint_n, act_slot, act_b, act_a, split_line, split_vs, split_hs
 needle_try:  .byte 0                    | h_xsp_set_main: a needle pair being looked for
     .balign 2
-    .globl  hint_nx, hint_r1
+    .globl  hint_nx, hint_r1, hint_exp
 hint_nx:     .byte 0                    | _hint: the first line to look at (V counter)
     .balign 2
 hint_r1:     .word 0                    | (register 10 + 1: the lines from one H-int to the next)
+hint_exp:    .word 0                    | (the line the next H-int comes at)
 split_line:  .word 0                    | plane A split for the frame shown (_hint):
 split_vs:    .word 0                    | from this line on (0: none) this scroll
 split_hs:    .word 0
