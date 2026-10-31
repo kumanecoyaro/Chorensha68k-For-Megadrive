@@ -18,7 +18,7 @@
 
     .include "spr_def.inc"
     .set    MAX_CALLS, 255
-    .set    MAX_HW, 64
+    .set    MAX_HW, 80                      | (H40)
     .set    PLAYER_LO, 0xABD                | player.ref, player2.ref
     .set    PLAYER_HI, 0xAD5
     .set    PLAYER_ROOM, 4                  | sprites kept free for the player after $3F
@@ -53,7 +53,7 @@
     .set    BULLET_PR, 0x3C                 | the enemy bullets: the sprite doubler's
     .set    DBL_MAX, 40                     | (at most this many bullets in the lower part
     .set    DBL_A, 96                       | of the screen reuse the slots of bullets above
-    .set    VRAM_HSCROLL, 0xDC00
+    .set    VRAM_HSCROLL, 0xD400
     .set    DBL_B, 112                      | line DBL_A: src/xsp.c xsp_upload, the H-int)
     .set    DEBRIS_LO, 0x0B4                | debris.sp (particles): not drawn
     .set    DEBRIS_HI, 0x104
@@ -1513,10 +1513,10 @@ _hint:
 2:  moveq   #0, %d1
     move.b  (%a1)+, %d1
     lsl.w   #3, %d1
-    add.w   #0xD800 & 0x3FFF, %d1       | (VRAM_SPRITES)
+    add.w   #0xBC00 & 0x3FFF, %d1       | (VRAM_SPRITES)
     or.w    #0x4000, %d1
     move.w  %d1, (%a0)
-    move.w  #0xD800 >> 14, (%a0)
+    move.w  #0xBC00 >> 14, (%a0)
     move.l  (%a2)+, -4(%a0)
     move.l  (%a2)+, -4(%a0)
     dbra    %d3, 2b

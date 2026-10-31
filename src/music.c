@@ -96,7 +96,7 @@ static const u8 ch_part[6] = { 0, 0, 0, 1, 1, 1 };
 static const u8 ch_off[6] = { 0, 1, 2, 0, 1, 2 };
 
 extern u16 ym_shadow[2][0xA0];       /* (src/sound.c: registers $20..$BF) */
-#define YM_QMAX 1152                /* (src/sound.c QMAX) */
+#define YM_QMAX 960                 /* (src/sound.c QMAX) */
 extern u8 queue[];
 extern u16 qlen;
 u16 ym_flush(void);

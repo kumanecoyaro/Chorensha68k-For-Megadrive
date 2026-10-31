@@ -14,13 +14,13 @@ static const u8 vdp_regs[24] = {
     0x00, 0x00,
     96 - 1,                 /* 10: HInt every 96 lines (src/xsp_fast.s DBL_A: the sprite doubler) */
     0x00,                   /* 11: full-screen H/V scroll */
-    0x00,                   /* 12: H32, no interlace */
+    0x81,                   /* 12: H40, no interlace (the play area the left 256 px) */
     VRAM_HSCROLL >> 10,     /* 13: hscroll table */
     0x00,
     0x02,                   /* 15: autoincrement 2 */
     0x10,                   /* 16: plane size 32x64 cells */
-    0x00,                   /* 17: window H = none */
-    0x01,                   /* 18: window V = top 1 row (score line) */
+    0x90,                   /* 17: window from cell 32 to the right edge (the score panel) */
+    0x00,                   /* 18: window V = none */
     0, 0, 0, 0, 0
 };
 

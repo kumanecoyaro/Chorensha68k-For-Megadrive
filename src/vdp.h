@@ -7,11 +7,15 @@
 #define VDP_CTRL   (*(volatile u16 *)0xC00004)
 #define VDP_CTRL32 (*(volatile u32 *)0xC00004)
 
-/* VRAM layout (H32, planes 32x64 cells) */
+/* VRAM layout (H40, planes 32x64 cells).  The window table is 64 cells wide
+ * in H40 but only its cells 32..39 of rows 0..27 show (the score panel on the
+ * right, +$40..$4F of each 128-byte row): the hscroll table (its first 4
+ * bytes, full-screen scroll) and the panel's opaque glyphs (src/main.c) sit
+ * in the rest.  The sprite table (80 entries) takes the last 32 tiles. */
+#define VRAM_SPRITES   0xBC00
 #define VRAM_PLANE_A   0xC000
 #define VRAM_WINDOW    0xD000
-#define VRAM_SPRITES   0xD800
-#define VRAM_HSCROLL   0xDC00
+#define VRAM_HSCROLL   0xD400
 #define VRAM_PLANE_B   0xE000
 
 #define VRAM_W(a)  (0x40000000UL | (((u32)(a) & 0x3FFF) << 16) | ((u32)(a) >> 14))

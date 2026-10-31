@@ -17,18 +17,77 @@ void sound_dma(u8 on);
 void bg_chips(void);
 
 u16 frame_count;
-static u16 hud_line[32];
+/* the score panel (window plane, screen cells 32..39 on the right, H40):
+ * the game's text rows 0..3 (the score line, the bombs, the ships) laid out
+ * in 8 columns, in opaque glyphs (the panel covers the sprites running off
+ * the play area: they are low priority) put in the unused part of the window
+ * table (src/vdp.h) */
+static const char hud_chars[] = " 0123456789SCOREHIBMP*\x04\x06\x07";
+#define HUD_ATTR (0x8000 | (TEXT_PAL << 13))
 
-/* text row 0 (score line) -> window plane */
+static u16 hud_tile(u8 i)               /* glyph i: +$20 / +$60 of window row i / 2 */
+{
+    return (VRAM_WINDOW + (i >> 1) * 128 + ((i & 1) ? 0x60 : 0x20)) / 32;
+}
+
+static u16 hud_cell(u8 c)
+{
+    u8 i;
+    if ((u8)(c - '0') < 10)
+        return HUD_ATTR | hud_tile(c - '0' + 1);
+    for (i = 11; hud_chars[i] && (u8)hud_chars[i] != c; i++)
+        ;
+    return HUD_ATTR | hud_tile(hud_chars[i] ? i : 0);
+}
+
+static void hud_row(u8 r, const u8 *s, u8 n)    /* panel row r: n characters (the rest blank) */
+{
+    u8 i;
+    VDP_CTRL32 = VRAM_W(VRAM_WINDOW + r * 128 + 64);
+    for (i = 0; i < 8; i++)
+        VDP_DATA = hud_cell(i < n ? s[i] : ' ');
+}
+
+static void hud_init(void)
+{
+    u8 i, r, k;
+    for (i = 0; hud_chars[i]; i++) {    /* the glyphs, background colour 2 (black) */
+        const u32 *t = &text_font[(u8)hud_chars[i] * 8];
+        VDP_CTRL32 = VRAM_W(hud_tile(i) * 32);
+        for (r = 0; r < 8; r++) {
+            u32 v = t[r], o = 0;
+            for (k = 0; k < 8; k++) {
+                u32 p = (v >> (k * 4)) & 15;
+                o |= (p ? p : 2) << (k * 4);
+            }
+            VDP_DATA32 = o;
+        }
+    }
+    for (r = 0; r < 28; r++)
+        hud_row(r, (const u8 *)"", 0);
+}
+
+/* the text rows the panel shows in a game (its score line in row 0): 0..3,
+ * the text sprites / plane A text from row text_row0() on */
+u8 text_row0(void)
+{
+    return text_grid[0][1] == 'S' && text_grid[0][2] == 'C' ? 4 : 0;
+}
+
 static void hud_build(void)
 {
-    int i;
-    for (i = 0; i < 32; i++) {
-        u8 c = text_grid[0][i];
-        hud_line[i] = c ? 0x8000 | (TEXT_PAL << 13) | (FONT_TILE_BASE + (c & 0x7F)) : 0;
-    }
-    if (OW(0x4a104) && !text_grid[0][31])   /* invincible (the title's up + START): a mark at the right end */
-        hud_line[31] = 0x8000 | (TEXT_PAL << 13) | (FONT_TILE_BASE + '*');
+    static const u8 score[] = "SCORE", hi[] = "HI", bomb[] = "BOMB", ship[] = "SHIP";
+    u8 game = text_row0() != 0;
+    hud_row(1, score, game ? 5 : 0);
+    hud_row(2, &text_grid[0][4], game ? 8 : 0);
+    hud_row(4, hi, game ? 2 : 0);
+    hud_row(5, &text_grid[0][23], game ? 8 : 0);
+    hud_row(7, bomb, game ? 4 : 0);
+    hud_row(8, &text_grid[1][1], game ? 8 : 0);
+    hud_row(10, ship, game ? 4 : 0);
+    hud_row(11, &text_grid[2][1], game ? 8 : 0);
+    hud_row(12, &text_grid[3][1], game ? 8 : 0);
+    hud_row(26, (const u8 *)"*", OW(0x4a104) ? 1 : 0);  /* invincible (the title's up + START) */
 }
 
 /* called by the vsync hook at the start of VBlank */
@@ -78,7 +137,6 @@ void vblank_work(void)
         sound_dma(0);
         if (text_dirty) {
             hud_build();
-            vdp_load_words(VRAM_WINDOW, hud_line, 32);
             text_dirty = 0;
         }
         frame_ready = 0;
@@ -118,6 +176,7 @@ int main(void)
     vdp_load_tiles(1, bg_sets[0].tiles, bg_sets[0].ntiles);
     sound_init();
     xsp_init();
+    hud_init();
     text_map_set(0);
     vdp_display(1);
     __asm__ volatile("move.w #0x2300, %sr");      /* (H-int: the sprite doubler) */

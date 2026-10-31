@@ -36,7 +36,7 @@ static u16 cache_a_base = BG_TILE_COUNT, cache_a_n = (CACHE_B_BASE - BG_TILE_COU
 
 #define STAGE_BYTES 3072            /* tiles converted per frame, DMAed in VBlank (RAM: the doubler's lists, src/plane.c fm_ev) */
 #define MAX_UP 48
-#define MAX_HW 64
+#define MAX_HW 80                        /* (H40) */
 
 typedef struct { u16 key; u16 tile; u16 stamp; u16 slot; } HEnt;
 typedef struct { u16 vram; u16 off; u16 words; } Upload;
@@ -489,7 +489,8 @@ void xsp_init(void)
 
 /* xsp_set / xsp_set_obj / xobj_set: src/xsp_fast.s */
 
-/* text rows 1.. as 8x8 sprites (row 0 is on the window plane) */
+/* text rows as 8x8 sprites (in a game rows 0..3 are in the score panel) */
+u8 text_row0(void);
 void xsp_call(s16 x, s16 y, u16 id, u16 info);
 
 static u8 last_ntext;                   /* text sprites at the front of the last table */
@@ -503,7 +504,7 @@ static void text_sprites(void)
     if (!text_spr_dirty && !last_ntext && text_on_plane == last_on_plane)
         return;                         /* (no text sprites: the usual case in a game) */
     last_on_plane = text_on_plane;
-    for (r = text_on_plane ? 28 : 1; r < 28; r++) {
+    for (r = text_on_plane ? 28 : text_row0(); r < 28; r++) {
         u8 tr = text_map[r];
         u32 m = text_row_mask[tr];
         for (c = 0; m; c++, m >>= 1)
@@ -533,7 +534,7 @@ void xsp_text_refresh(void)
                 BASE[base_n++] = table[i];
         base_valid = 1;
     }
-    for (r = text_on_plane ? 28 : 1; r < 28; r++) {
+    for (r = text_on_plane ? 28 : text_row0(); r < 28; r++) {
         u32 m = text_row_mask[text_map[r]];
         for (; m; m &= m - 1)
             n++;
@@ -546,7 +547,7 @@ void xsp_text_refresh(void)
     for (i = 0; i < rest; i++)
         table[n + i] = BASE[i];
     i = 0;
-    for (r = 1; r < 28 && i < n; r++) {
+    for (r = text_row0(); r < 28 && i < n; r++) {
         u8 tr = text_map[r];
         u32 m = text_row_mask[tr];
         for (c = 0; m && i < n; c++, m >>= 1)

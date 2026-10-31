@@ -28,13 +28,12 @@
 
 long ocall(void *fn, long a1, long a2, long a3, long a4);
 
-/* composite slots live in VRAM the H32 layout leaves unused (1 cell row of
- * the window plane, 64 sprites of the 80-entry table, a full-screen scroll
- * table): $D040-$D7FF, $DA00-$DBFF, $DC20-$DE5F (peak use in stage 1: 78) */
+/* composite slots live in VRAM the H40 layout leaves unused (the 4 KB
+ * after plane B, $F000-$FFFF: 128 tiles; peak use in stage 1: 78) */
 #define COMP_SLOTS 96
 static u16 slot_tile(u8 s)
 {
-    return s < 62 ? 0xD040 / 32 + s : s < 78 ? 0xDA00 / 32 + s - 62 : 0xDC20 / 32 + s - 78;
+    return 0xF000 / 32 + s;
 }
 #define CHIPQ 32
 #define UPQ   64

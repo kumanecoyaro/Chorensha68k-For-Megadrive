@@ -34,7 +34,7 @@ static u16 play_pr, play_frames;
 u8 sfx_duck;                        /* a loud effect plays: the music steps back (music.c) */
 #define DUCK_PR 0x44                /* the player's bomb, the big explosions, misses, items ... */
 
-#define QMAX 1152                   /* (src/music.c YM_QMAX) */
+#define QMAX 960                    /* (src/music.c YM_QMAX) */
 u8 queue[QMAX];                 /* pending 3-byte writes: part offset, reg, value */
 u16 qlen;
 u16 ym_shadow[2][0xA0];        /* last value written to $20..$BF, $100 = unknown */

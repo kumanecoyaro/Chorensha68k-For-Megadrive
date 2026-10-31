@@ -32,8 +32,8 @@
 #include "vdp.h"
 #include "spr.h"
 
-#define ENEMY_BASE 1234                 /* VRAM tiles 1234..1535 (xsp.c cache ends at 1234, plane A at 1536) */
-#define ENEMY_TILES (VRAM_PLANE_A / 32 - ENEMY_BASE)
+#define ENEMY_BASE 1234                 /* VRAM tiles 1234..1503 (xsp.c cache ends at 1234, the */
+#define ENEMY_TILES (VRAM_SPRITES / 32 - ENEMY_BASE)    /* sprite table at 1504) */
 /* a group of more tiles (the stage 6 boss) borrows the sprite cache's last
  * 16-tile slots below them while it is loaded (src/xsp.c xsp_lend) */
 #define LEND_SLOTS ((PLANE_MAX_TILES - ENEMY_TILES + 15) / 16)
@@ -519,11 +519,12 @@ extern u8 text_pl_dirty;
 u8 text_on_plane;                       /* (xsp.c: no text sprites) */
 
 extern u8 text_map[28];                 /* screen row r shows text row text_map[r] (x68.c) */
+u8 text_row0(void);                     /* (src/main.c: the rows before it in the score panel) */
 static u32 text_rows(void)
 {
     u32 m = 0;
     u8 r;
-    for (r = 1; r < 28; r++)
+    for (r = text_row0(); r < 28; r++)
         if (text_row_mask[text_map[r]])
             m |= 1UL << r;
     return m;
@@ -533,7 +534,7 @@ static void write_text(void)
 {
     u8 r, c, pr, half;
     clear_win_rows();
-    for (r = 1; r < 28; r++)
+    for (r = text_row0(); r < 28; r++)
         if (text_row_mask[text_map[r]]) {
             u16 *d = win[r];
             const u8 *t = text_grid[text_map[r]];
