@@ -32,7 +32,7 @@ static u16 hud_tile(u8 i)               /* glyph i (< 22): +$20 / +$60 of window
 }
 
 /* character -> the cell (computed once: hud_init) */
-static u8 hud_map[128];
+static const u8 hud_map[128] = { ['0'] = 1, ['1'] = 2, ['2'] = 3, ['3'] = 4, ['4'] = 5, ['5'] = 6, ['6'] = 7, ['7'] = 8, ['8'] = 9, ['9'] = 10, ['S'] = 11, ['C'] = 12, ['O'] = 13, ['R'] = 14, ['E'] = 15, ['H'] = 16, ['I'] = 17, ['*'] = 18, [0x04] = 19, [0x06] = 20, [0x07] = 21 };   /* (hud_chars) */
 static u16 hud_cell(u8 c)
 {
     return HUD_ATTR | hud_tile(hud_map[c & 127]);
@@ -50,10 +50,6 @@ static void hud_row(u8 r, const u8 *s, u8 n)    /* panel row r: n characters (th
 static void hud_init(void)
 {
     u8 i, r, k;
-    for (i = 0; i < 128; i++)
-        hud_map[i] = 0;
-    for (i = 0; hud_chars[i]; i++)
-        hud_map[(u8)hud_chars[i]] = i;
     for (i = 0; hud_chars[i]; i++) {    /* the glyphs, background colour 2 (black) */
         const u32 *t = &text_font[(u8)hud_chars[i] * 8];
         VDP_CTRL32 = VRAM_W(hud_tile(i) * 32);

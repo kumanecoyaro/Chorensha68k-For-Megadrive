@@ -95,7 +95,7 @@ void psg_write(u8 v);
 static const u8 ch_part[6] = { 0, 0, 0, 1, 1, 1 };
 static const u8 ch_off[6] = { 0, 1, 2, 0, 1, 2 };
 
-extern u16 ym_shadow[2][0xA0];       /* (src/sound.c: registers $20..$BF) */
+extern u8 ym_shadow[2][0xA0];       /* (src/sound.c: registers $20..$BF) */
 #define YM_QMAX 960                 /* (src/sound.c QMAX) */
 extern u8 queue[];
 extern u16 qlen;
@@ -167,7 +167,7 @@ static void fm_tl(MCh *c, s16 lfo)
     const u8 *v = c->voice;
     s16 a;
     u8 k, part, r, car, m;
-    u16 *sh;
+    u8 *sh;
     u8 *q;
     if (!v || (k = c->kind) == MUTED)
         return;
@@ -200,7 +200,7 @@ static void fm_tl(MCh *c, s16 lfo)
             if (tl < 0) tl = 0;
             if (tl > 127) tl = 127;
         }
-        if (*sh == (u16)tl)
+        if (*sh == (u8)tl)
             continue;
         *sh = tl;
         q[0] = part; q[1] = r; q[2] = (u8)tl;

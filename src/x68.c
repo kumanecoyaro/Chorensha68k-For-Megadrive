@@ -148,10 +148,16 @@ long x_vsync(long n)
 }
 
 /* fn_2cf3a: XSP display list done; p -> {x0, x1, y0, y1} BG scroll (24.8) */
+#ifdef SPIN_COUNT
+u32 spin_n;
+#endif
 long x_xsp_out(long p)
 {
     const volatile s32 *s = (const volatile s32 *)p;
     PROBE(1);
+#ifdef SPIN_COUNT
+    { extern u32 spin_n; while (frame_ready) spin_n++; }
+#endif
     while (frame_ready)             /* the last frame is still waiting for its VBlank */
         ;
     xsp_flush();
